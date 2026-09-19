@@ -38,12 +38,14 @@ class ContextMapTuiApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Open the landing screen once the application is mounted."""
-        self.push_screen(HomeScreen(self.client.status()), name="home")
+        """Install and open the landing screen once the application is mounted."""
+        self.install_screen(HomeScreen(self.client.status()), name="home")
+        self.push_screen("home")
 
     def action_home(self) -> None:
         """Return to the named home screen without coupling callers to screen classes."""
-        if self.screen is self.get_screen("home"):
+        home = self.get_screen("home")
+        if self.screen is home:
             return
         self.switch_screen("home")
 
