@@ -15,10 +15,10 @@ from textual.widgets import Button, DataTable, Input, ProgressBar, RichLog, Stat
 from contextmap_tui.runtime import (
     PipelineConfigView,
     PipelineRunResult,
+    RunRecord,
     RuntimeEvent,
     RuntimeGateway,
     RuntimeOperationError,
-    RunRecord,
 )
 
 
@@ -28,6 +28,7 @@ class PipelineScreen(Screen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "back", "Back")]
 
     def __init__(self, runtime: RuntimeGateway) -> None:
+        """Create a pipeline console over one runtime gateway."""
         super().__init__()
         self._runtime = runtime
         self._config: PipelineConfigView | None = None
@@ -36,6 +37,7 @@ class PipelineScreen(Screen[None]):
         self._runs: tuple[RunRecord, ...] = ()
 
     def compose(self) -> ComposeResult:
+        """Compose capability, topology, execution and lineage surfaces."""
         with VerticalScroll(id="pipeline-content"):
             yield Static("Pipeline Console", id="pipeline-title")
             yield Static("", id="runtime-availability")
@@ -61,6 +63,7 @@ class PipelineScreen(Screen[None]):
             yield Static("Select a persisted run.", id="run-detail")
 
     def on_mount(self) -> None:
+        """Configure data tables and discover the runtime contract."""
         capabilities = self.query_one("#capability-table", DataTable)
         capabilities.add_columns("Stage", "Available", "Optional", "Backends", "Detail")
         pipeline = self.query_one("#pipeline-table", DataTable)
@@ -70,6 +73,7 @@ class PipelineScreen(Screen[None]):
         self._load_runtime()
 
     def action_back(self) -> None:
+        """Return to the previous screen."""
         self.app.pop_screen()
 
     def _load_runtime(self) -> None:
