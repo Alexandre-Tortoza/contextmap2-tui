@@ -73,6 +73,8 @@ class WorkspaceScreen(Screen[None]):
         self.query_one("#workspace-status", Static).update(
             f"{len(self._artifacts)} artifact(s) discovered in {workspace_root}"
         )
+        if self._artifacts:
+            table.focus()
 
     def action_back(self) -> None:
         """Return to the previous screen."""
