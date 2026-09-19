@@ -89,7 +89,11 @@ class ArtifactScreen(Screen[None]):
             self.notify(str(error), title="Artifact error", severity="error")
             return
 
-        integrity = "OK" if overview.integrity_ok else f"{len(overview.integrity_problems)} problem(s)"
+        integrity = (
+            "OK"
+            if overview.integrity_ok
+            else f"{len(overview.integrity_problems)} problem(s)"
+        )
         counts = ", ".join(
             f"{name}={count}" for name, count in sorted(overview.observation_counts.items())
         )
