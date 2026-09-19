@@ -11,7 +11,8 @@ from textual.widgets import Footer, Header
 
 from contextmap_tui.client import ContextMapClient
 from contextmap_tui.ingestion import IngestionRunner, UnavailableIngestionRunner
-from contextmap_tui.integration import LocalContextMapClient
+from contextmap_tui.integration import LocalContextMapClient, LocalRuntimeGateway
+from contextmap_tui.runtime import RuntimeGateway
 from contextmap_tui.screens import HomeScreen
 
 
@@ -31,12 +32,14 @@ class ContextMapTuiApp(App[None]):
         client: ContextMapClient | None = None,
         *,
         ingestion_runner: IngestionRunner | None = None,
+        runtime_gateway: RuntimeGateway | None = None,
         workspace_root: Path | None = None,
     ) -> None:
         """Create the app with injectable presentation/execution boundaries."""
         super().__init__()
         self.client = client or LocalContextMapClient()
         self.ingestion_runner = ingestion_runner or UnavailableIngestionRunner()
+        self.runtime_gateway = runtime_gateway or LocalRuntimeGateway()
         self.workspace_root = workspace_root or (Path.cwd() / "workspace")
 
     def compose(self) -> ComposeResult:
@@ -51,6 +54,7 @@ class ContextMapTuiApp(App[None]):
                 self.client.status(),
                 self.client,
                 self.ingestion_runner,
+                self.runtime_gateway,
                 self.workspace_root,
             ),
             name="home",
