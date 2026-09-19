@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from threading import Event
-from typing import Protocol, runtime_checkable
+from typing import Never, Protocol, runtime_checkable
 
 
 class RuntimeOperationError(RuntimeError):
@@ -154,7 +154,7 @@ class UnavailableRuntimeGateway:
         """Report that no verified runtime execution capability exists."""
         return RuntimeAvailability(available=False, detail=self.reason)
 
-    def _raise(self) -> None:
+    def _raise(self) -> Never:
         raise RuntimeOperationError(self.reason)
 
     def capabilities(self) -> tuple[StageCapability, ...]:
