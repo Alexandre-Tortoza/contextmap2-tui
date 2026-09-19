@@ -144,7 +144,8 @@ async def test_artifact_filter_updates_table() -> None:
 
         modality = app.screen.query_one("#filter-modality", Input)
         modality.value = "lidar"
-        await pilot.click("#apply-filter")
+        modality.focus()
+        await pilot.press("enter")
         await pilot.pause()
 
         assert "0-0 of 0" in str(app.screen.query_one("#page-status").render())
