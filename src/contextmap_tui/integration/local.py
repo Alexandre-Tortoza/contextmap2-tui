@@ -227,7 +227,7 @@ class LocalContextMapClient:
                 )
                 for item in synchronization.decisions
             )
-            modality_of = getattr(ingestion, "observation_modality")
+            modality_of = ingestion.observation_modality
             dropped_events = tuple(
                 DroppedEventView(
                     observation_id=str(item.observation.observation_id),
