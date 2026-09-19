@@ -11,7 +11,9 @@ from textual.widgets import Label, Static
 
 from contextmap_tui.client import ClientStatus, ContextMapClient
 from contextmap_tui.ingestion import IngestionRunner
+from contextmap_tui.runtime import RuntimeGateway
 from contextmap_tui.screens.ingestion import IngestionScreen
+from contextmap_tui.screens.pipeline import PipelineScreen
 from contextmap_tui.screens.workspace import WorkspaceScreen
 
 
@@ -20,7 +22,8 @@ class HomeScreen(Screen[None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("e", "explore", "Explore"),
-        ("o", "operate", "Operate"),
+        ("o", "operate", "Ingestion"),
+        ("p", "pipeline", "Pipeline"),
     ]
 
     def __init__(
@@ -28,13 +31,15 @@ class HomeScreen(Screen[None]):
         status: ClientStatus,
         client: ContextMapClient,
         ingestion_runner: IngestionRunner,
+        runtime_gateway: RuntimeGateway,
         workspace_root: Path,
     ) -> None:
-        """Create the home screen from gateway and workspace information."""
+        """Create the home screen from presentation and execution boundaries."""
         super().__init__()
         self._status = status
         self._client = client
         self._ingestion_runner = ingestion_runner
+        self._runtime_gateway = runtime_gateway
         self._workspace_root = workspace_root
 
     def compose(self) -> ComposeResult:
@@ -43,10 +48,12 @@ class HomeScreen(Screen[None]):
         with VerticalScroll(id="home-content"):
             yield Label("ContextMap2", id="home-title")
             yield Static(
-                "Explore\n"
+                "Explore [e]\n"
                 "  Artifact and evidence inspection\n\n"
-                "Operate\n"
-                "  Ingestion configuration, preflight and execution",
+                "Ingestion [o]\n"
+                "  Source configuration, preflight and execution\n\n"
+                "Pipeline [p]\n"
+                "  Runtime capabilities, topology, preflight, execution and lineage",
                 id="home-actions",
             )
             yield Static(
@@ -59,7 +66,7 @@ class HomeScreen(Screen[None]):
         self.app.push_screen(WorkspaceScreen(self._client, self._workspace_root))
 
     def action_operate(self) -> None:
-        """Open the Ingestion console even when execution is explicitly unavailable."""
+        """Open the Ingestion console."""
         self.app.push_screen(
             IngestionScreen(
                 self._client,
@@ -67,3 +74,7 @@ class HomeScreen(Screen[None]):
                 self._workspace_root,
             )
         )
+
+    def action_pipeline(self) -> None:
+        """Open the runtime pipeline console."""
+        self.app.push_screen(PipelineScreen(self._runtime_gateway))
