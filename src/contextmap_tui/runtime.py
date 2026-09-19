@@ -151,15 +151,18 @@ class UnavailableRuntimeGateway:
     reason: str = "contextmap.runtime is not available in the installed ContextMap2 core."
 
     def availability(self) -> RuntimeAvailability:
+        """Report that no verified runtime execution capability exists."""
         return RuntimeAvailability(available=False, detail=self.reason)
 
     def _raise(self) -> None:
         raise RuntimeOperationError(self.reason)
 
     def capabilities(self) -> tuple[StageCapability, ...]:
+        """Reject capability discovery while the runtime is unavailable."""
         self._raise()
 
     def pipeline_config(self) -> PipelineConfigView:
+        """Reject configuration access while the runtime is unavailable."""
         self._raise()
 
     def edit_stage(
@@ -170,10 +173,12 @@ class UnavailableRuntimeGateway:
         enabled: bool | None = None,
         backend: str | None = None,
     ) -> PipelineConfigView:
+        """Reject edits rather than guessing unsupported runtime semantics."""
         del config, stage_id, enabled, backend
         self._raise()
 
     def preflight(self, config: PipelineConfigView) -> RuntimePreflight:
+        """Reject preflight while the runtime is unavailable."""
         del config
         self._raise()
 
@@ -184,10 +189,12 @@ class UnavailableRuntimeGateway:
         emit: RuntimeProgressSink,
         cancel_event: Event,
     ) -> PipelineRunResult:
+        """Reject execution while the runtime is unavailable."""
         del config, emit, cancel_event
         self._raise()
 
     def list_runs(self) -> tuple[RunRecord, ...]:
+        """Reject run discovery while the runtime is unavailable."""
         self._raise()
 
 
@@ -203,12 +210,19 @@ class FakeRuntimeGateway:
     run_records: tuple[RunRecord, ...] = ()
 
     def availability(self) -> RuntimeAvailability:
-        return RuntimeAvailability(available=True, detail="deterministic fake runtime", api_version="fake")
+        """Report deterministic test runtime availability."""
+        return RuntimeAvailability(
+            available=True,
+            detail="deterministic fake runtime",
+            api_version="fake",
+        )
 
     def capabilities(self) -> tuple[StageCapability, ...]:
+        """Return configured fake stage capabilities."""
         return self.stage_capabilities
 
     def pipeline_config(self) -> PipelineConfigView:
+        """Return the current deterministic fake configuration."""
         return self.config
 
     def edit_stage(
@@ -219,6 +233,7 @@ class FakeRuntimeGateway:
         enabled: bool | None = None,
         backend: str | None = None,
     ) -> PipelineConfigView:
+        """Validate and apply an edit using deterministic fake runtime rules."""
         capability = next(
             (item for item in self.stage_capabilities if item.stage_id == stage_id),
             None,
@@ -249,6 +264,7 @@ class FakeRuntimeGateway:
         return updated
 
     def preflight(self, config: PipelineConfigView) -> RuntimePreflight:
+        """Return the configured deterministic preflight result."""
         del config
         return self.preflight_result
 
@@ -259,6 +275,7 @@ class FakeRuntimeGateway:
         emit: RuntimeProgressSink,
         cancel_event: Event,
     ) -> PipelineRunResult:
+        """Emit configured events and return the deterministic run result."""
         del config
         if cancel_event.is_set():
             return PipelineRunResult(status="cancelled")
@@ -269,4 +286,5 @@ class FakeRuntimeGateway:
         return self.run_result
 
     def list_runs(self) -> tuple[RunRecord, ...]:
+        """Return configured persisted run projections."""
         return self.run_records
