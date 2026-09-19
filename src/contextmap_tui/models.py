@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +164,11 @@ def observation_matches(item: ObservationView, criteria: ObservationFilter) -> b
     if criteria.modality and item.modality != criteria.modality:
         return False
     target = criteria.sensor_or_frame.casefold().strip()
-    if target and target not in item.sensor_id.casefold() and target not in item.frame_id.casefold():
+    if (
+        target
+        and target not in item.sensor_id.casefold()
+        and target not in item.frame_id.casefold()
+    ):
         return False
     text = criteria.text.casefold().strip()
     if not text:
