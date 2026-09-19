@@ -243,8 +243,7 @@ def _format_diagnostics(view: DiagnosticsView | None) -> str:
     ]
     if view.synchronization_status_counts:
         statuses = ", ".join(
-            f"{name}={count}"
-            for name, count in sorted(view.synchronization_status_counts.items())
+            f"{name}={count}" for name, count in sorted(view.synchronization_status_counts.items())
         )
         lines.append(f"sync status: {statuses}")
     if view.warnings:
