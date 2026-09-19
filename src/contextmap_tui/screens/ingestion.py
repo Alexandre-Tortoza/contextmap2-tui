@@ -118,9 +118,7 @@ class IngestionScreen(Screen[None]):
             sequence_name=self.query_one("#sequence-name", Input).value.strip(),
             workspace_root=workspace_root,
             topics=topics,
-            required_topics=parse_required_topics(
-                self.query_one("#required-topics", Input).value
-            ),
+            required_topics=parse_required_topics(self.query_one("#required-topics", Input).value),
             timestamp_clock_id=clock_text or None,
             calibration_path=Path(calibration_text).expanduser() if calibration_text else None,
             reference_modality=self.query_one("#reference-modality", Input).value.strip(),
