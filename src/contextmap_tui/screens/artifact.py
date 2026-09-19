@@ -147,6 +147,8 @@ class ArtifactScreen(Screen[None]):
         self.query_one("#observation-detail", Static).update(
             "Select an observation to inspect provenance."
         )
+        if self._page.items:
+            table.focus()
 
     @on(Button.Pressed, "#apply-filter")
     def _apply_filter(self) -> None:
