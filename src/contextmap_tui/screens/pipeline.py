@@ -224,9 +224,7 @@ class PipelineScreen(Screen[None]):
         self.app.call_from_thread(self._handle_event, event)
 
     def _handle_event(self, event: RuntimeEvent) -> None:
-        self.query_one("#pipeline-log", RichLog).write(
-            f"[{event.stage_id}] {event.message}"
-        )
+        self.query_one("#pipeline-log", RichLog).write(f"[{event.stage_id}] {event.message}")
         if event.progress_percent is not None:
             progress = min(100.0, max(0.0, event.progress_percent))
             self.query_one("#pipeline-progress", ProgressBar).update(progress=progress)
