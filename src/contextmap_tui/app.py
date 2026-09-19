@@ -1,5 +1,7 @@
 """Textual application entry point."""
 
+from typing import ClassVar
+
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Static
 
@@ -9,7 +11,7 @@ class ContextMapTuiApp(App[None]):
 
     TITLE = "ContextMap2"
     SUB_TITLE = "TUI"
-    BINDINGS = [("q", "quit", "Quit")]
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("q", "quit", "Quit")]
 
     def compose(self) -> ComposeResult:
         """Compose the minimal bootstrap UI."""
