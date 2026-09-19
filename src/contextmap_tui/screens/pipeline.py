@@ -275,12 +275,8 @@ class PipelineScreen(Screen[None]):
 
 def _format_run(run: RunRecord) -> str:
     """Format only persisted lineage fields provided by the runtime."""
-    config = ", ".join(
-        f"{key}={value!r}" for key, value in sorted(run.effective_config.items())
-    )
-    metrics = ", ".join(
-        f"{key}={value!r}" for key, value in sorted(run.metrics.items())
-    )
+    config = ", ".join(f"{key}={value!r}" for key, value in sorted(run.effective_config.items()))
+    metrics = ", ".join(f"{key}={value!r}" for key, value in sorted(run.metrics.items()))
     return (
         f"run_id: {run.run_id}\n"
         f"status: {run.status}\n"
