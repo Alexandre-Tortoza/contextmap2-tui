@@ -247,9 +247,7 @@ class PipelineScreen(Screen[None]):
     @on(Button.Pressed, "#cancel-pipeline")
     def _cancel_pressed(self) -> None:
         self._cancel_event.set()
-        self.query_one("#pipeline-execution-status", Static).update(
-            "Cancellation requested..."
-        )
+        self.query_one("#pipeline-execution-status", Static).update("Cancellation requested...")
 
     def _refresh_runs(self) -> None:
         try:
