@@ -2,7 +2,7 @@ from pathlib import Path
 
 from contextmap_tui.app import ContextMapTuiApp
 from contextmap_tui.client import FakeContextMapClient
-from contextmap_tui.screens import HomeScreen, WorkspaceScreen
+from contextmap_tui.screens import HomeScreen, IngestionScreen, WorkspaceScreen
 
 
 async def test_app_opens_home_with_injected_client() -> None:
@@ -32,10 +32,10 @@ async def test_explore_binding_opens_workspace_and_home_binding_returns() -> Non
         assert isinstance(app.screen, HomeScreen)
 
 
-async def test_operate_binding_keeps_home_until_runtime_milestone() -> None:
+async def test_operate_binding_opens_ingestion_console() -> None:
     app = ContextMapTuiApp(client=FakeContextMapClient())
 
     async with app.run_test() as pilot:
         await pilot.press("o")
         await pilot.pause()
-        assert isinstance(app.screen, HomeScreen)
+        assert isinstance(app.screen, IngestionScreen)
