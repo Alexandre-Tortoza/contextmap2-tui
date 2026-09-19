@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from importlib import import_module
 from pathlib import Path
-from types import ModuleType
 from typing import Any, cast
 
 from contextmap_tui.client import ClientOperationError, ClientStatus
@@ -45,7 +44,7 @@ class LocalContextMapClient:
     def list_artifacts(self, workspace_root: Path) -> tuple[ArtifactRef, ...]:
         """Discover sequence artifacts and validate them by opening the core reader."""
         ingestion = self._ingestion()
-        reader_type = getattr(ingestion, "SequenceArtifactReader")
+        reader_type = ingestion.SequenceArtifactReader
         sequences_root = workspace_root / "sequences"
         if not sequences_root.is_dir():
             return ()
@@ -104,7 +103,7 @@ class LocalContextMapClient:
         if offset < 0 or limit <= 0:
             raise ClientOperationError("offset must be >= 0 and limit must be > 0")
         ingestion = self._ingestion()
-        modality_of = getattr(ingestion, "observation_modality")
+        modality_of = ingestion.observation_modality
         reader = self._reader(artifact)
         items: list[ObservationView] = []
         for observation in reader.list_observations():
@@ -145,7 +144,7 @@ class LocalContextMapClient:
         provenance = reader.read_provenance()
         if provenance is None:
             return None
-        identity = getattr(ingestion, "compute_content_identity")(provenance)
+        identity = ingestion.compute_content_identity(provenance)
         return ProvenanceView(
             source_type=str(provenance.source_type),
             source_path=str(provenance.source_path),
@@ -254,14 +253,14 @@ class LocalContextMapClient:
         if not artifact.readable:
             raise ClientOperationError(artifact.detail or "artifact is not readable")
         ingestion = self._ingestion()
-        reader_type = getattr(ingestion, "SequenceArtifactReader")
+        reader_type = ingestion.SequenceArtifactReader
         try:
             return reader_type(artifact.path)
         except Exception as error:
             raise ClientOperationError(f"cannot open artifact {artifact.path}: {error}") from error
 
     @staticmethod
-    def _ingestion() -> ModuleType:
+    def _ingestion() -> Any:
         try:
             return import_module(_PUBLIC_INGESTION_MODULE)
         except ImportError as error:
