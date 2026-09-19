@@ -17,7 +17,11 @@ from contextmap_tui.screens import ArtifactScreen, WorkspaceScreen
 
 
 def _fixture_client() -> FakeContextMapClient:
-    ref = ArtifactRef("corridor", "artifact-a", Path("/tmp/workspace/sequences/corridor/artifact-a"))
+    ref = ArtifactRef(
+        "corridor",
+        "artifact-a",
+        Path("/tmp/workspace/sequences/corridor/artifact-a"),
+    )
     observation = ObservationView(
         observation_id="frame-1",
         modality="image",
