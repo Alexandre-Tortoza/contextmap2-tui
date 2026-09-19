@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.widgets import Footer, Header
 
-from contextmap_tui.client import ContextMapClient, FakeContextMapClient
+from contextmap_tui.client import ContextMapClient
+from contextmap_tui.integration import LocalContextMapClient
 from contextmap_tui.screens import HomeScreen
 
 
@@ -23,14 +25,16 @@ class ContextMapTuiApp(App[None]):
         ("q", "quit", "Quit"),
     ]
 
-    def __init__(self, client: ContextMapClient | None = None) -> None:
+    def __init__(
+        self,
+        client: ContextMapClient | None = None,
+        *,
+        workspace_root: Path | None = None,
+    ) -> None:
         """Create the app with an injectable presentation gateway."""
         super().__init__()
-        self.client = client or FakeContextMapClient(
-            backend_name="not configured",
-            connected=False,
-            detail="Install/configure ContextMap2 integration in a later milestone.",
-        )
+        self.client = client or LocalContextMapClient()
+        self.workspace_root = workspace_root or (Path.cwd() / "workspace")
 
     def compose(self) -> ComposeResult:
         """Compose persistent chrome; screens own page content."""
@@ -39,7 +43,10 @@ class ContextMapTuiApp(App[None]):
 
     def on_mount(self) -> None:
         """Install and open the landing screen once the application is mounted."""
-        self.install_screen(HomeScreen(self.client.status()), name="home")
+        self.install_screen(
+            HomeScreen(self.client.status(), self.client, self.workspace_root),
+            name="home",
+        )
         self.push_screen("home")
 
     def action_home(self) -> None:

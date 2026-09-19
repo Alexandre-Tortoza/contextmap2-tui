@@ -1,5 +1,6 @@
 """Home screen for the ContextMap2 TUI."""
 
+from pathlib import Path
 from typing import ClassVar
 
 from textual.app import ComposeResult
@@ -8,7 +9,8 @@ from textual.containers import VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Label, Static
 
-from contextmap_tui.client import ClientStatus
+from contextmap_tui.client import ClientStatus, ContextMapClient
+from contextmap_tui.screens.workspace import WorkspaceScreen
 
 
 class HomeScreen(Screen[None]):
@@ -19,10 +21,17 @@ class HomeScreen(Screen[None]):
         ("o", "operate", "Operate"),
     ]
 
-    def __init__(self, status: ClientStatus) -> None:
-        """Create the home screen from gateway status data."""
+    def __init__(
+        self,
+        status: ClientStatus,
+        client: ContextMapClient,
+        workspace_root: Path,
+    ) -> None:
+        """Create the home screen from gateway and workspace information."""
         super().__init__()
         self._status = status
+        self._client = client
+        self._workspace_root = workspace_root
 
     def compose(self) -> ComposeResult:
         """Compose the landing screen."""
@@ -42,9 +51,9 @@ class HomeScreen(Screen[None]):
             )
 
     def action_explore(self) -> None:
-        """Show a stable placeholder until Artifact Explorer is implemented."""
-        self.notify("Artifact Explorer is planned for the next milestone.", title="Explore")
+        """Open the canonical artifact workspace browser."""
+        self.app.push_screen(WorkspaceScreen(self._client, self._workspace_root))
 
     def action_operate(self) -> None:
-        """Show a stable placeholder until execution screens are implemented."""
+        """Report that execution consoles are not part of this milestone."""
         self.notify("Execution consoles depend on later milestones.", title="Operate")
