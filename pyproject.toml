@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=84.0.0", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "contextmap-tui"
+dynamic = ["version"]
+description = "Terminal interface for exploring and operating ContextMap2."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Alexandre Tortoza" }
+]
+dependencies = [
+  "textual>=8.2,<9",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.6.1",
+  "mypy>=2.3.1",
+  "pytest>=9.1.1",
+  "pytest-asyncio>=1.2.0",
+  "pytest-cov>=7.1.0",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+contextmap-tui = "contextmap_tui.app:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["contextmap_tui"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
