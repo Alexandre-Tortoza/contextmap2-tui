@@ -96,9 +96,7 @@ class IngestionScreen(Screen[None]):
 
     def _request(self) -> IngestionRequest:
         source_path = Path(self.query_one("#source-path", Input).value.strip()).expanduser()
-        workspace_root = Path(
-            self.query_one("#output-workspace", Input).value.strip()
-        ).expanduser()
+        workspace_root = Path(self.query_one("#output-workspace", Input).value.strip()).expanduser()
         calibration_text = self.query_one("#calibration-path", Input).value.strip()
         clock_text = self.query_one("#clock-id", Input).value.strip()
         topics = {
