@@ -10,6 +10,7 @@ from textual.binding import BindingType
 from textual.widgets import Footer, Header
 
 from contextmap_tui.client import ContextMapClient
+from contextmap_tui.ingestion import IngestionRunner, UnavailableIngestionRunner
 from contextmap_tui.integration import LocalContextMapClient
 from contextmap_tui.screens import HomeScreen
 
@@ -29,11 +30,13 @@ class ContextMapTuiApp(App[None]):
         self,
         client: ContextMapClient | None = None,
         *,
+        ingestion_runner: IngestionRunner | None = None,
         workspace_root: Path | None = None,
     ) -> None:
-        """Create the app with an injectable presentation gateway."""
+        """Create the app with injectable presentation/execution boundaries."""
         super().__init__()
         self.client = client or LocalContextMapClient()
+        self.ingestion_runner = ingestion_runner or UnavailableIngestionRunner()
         self.workspace_root = workspace_root or (Path.cwd() / "workspace")
 
     def compose(self) -> ComposeResult:
@@ -44,7 +47,12 @@ class ContextMapTuiApp(App[None]):
     def on_mount(self) -> None:
         """Install and open the landing screen once the application is mounted."""
         self.install_screen(
-            HomeScreen(self.client.status(), self.client, self.workspace_root),
+            HomeScreen(
+                self.client.status(),
+                self.client,
+                self.ingestion_runner,
+                self.workspace_root,
+            ),
             name="home",
         )
         self.push_screen("home")
