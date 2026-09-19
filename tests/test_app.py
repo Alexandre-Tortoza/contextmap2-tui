@@ -4,9 +4,7 @@ from contextmap_tui.screens import HomeScreen
 
 
 async def test_app_opens_home_with_injected_client() -> None:
-    app = ContextMapTuiApp(
-        client=FakeContextMapClient(backend_name="fixture", detail="ready")
-    )
+    app = ContextMapTuiApp(client=FakeContextMapClient(backend_name="fixture", detail="ready"))
 
     async with app.run_test() as pilot:
         await pilot.pause()
