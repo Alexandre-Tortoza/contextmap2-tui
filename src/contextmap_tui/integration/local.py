@@ -209,8 +209,8 @@ class LocalContextMapClient:
             return None
         summary = diagnostics.summary
         synchronization = diagnostics.synchronization
-        decisions = ()
-        dropped_events = ()
+        decisions: tuple[SynchronizationDecisionView, ...] = ()
+        dropped_events: tuple[DroppedEventView, ...] = ()
         if synchronization is not None:
             decisions = tuple(
                 SynchronizationDecisionView(
