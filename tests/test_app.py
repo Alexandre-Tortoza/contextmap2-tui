@@ -9,7 +9,7 @@ async def test_app_opens_home_with_injected_client() -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         assert isinstance(app.screen, HomeScreen)
-        assert "fixture" in str(app.query_one("#client-status").render())
+        assert "fixture" in str(app.screen.query_one("#client-status").render())
 
 
 async def test_home_navigation_bindings_do_not_replace_screen() -> None:
