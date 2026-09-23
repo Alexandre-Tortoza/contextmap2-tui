@@ -7,11 +7,11 @@ import json
 from collections.abc import Mapping
 from importlib import import_module
 from pathlib import Path
-from threading import Event
 from typing import Any
 
 from contextmap_tui.ingestion import (
     IngestionDiscovery,
+    IngestionEvent,
     IngestionPreflight,
     IngestionResult,
     PreparedIngestion,
@@ -20,6 +20,7 @@ from contextmap_tui.ingestion import (
     SourceBackendChoice,
     parse_required_topics,
 )
+from contextmap_tui.models import ArtifactRef
 
 _SOURCE_COMPONENT = "ingestion.source_adapter"
 _FORM_FIELDS = frozenset(
@@ -59,21 +60,19 @@ class LocalIngestionRunner:
         return import_module("contextmap.runtime"), import_module("contextmap.ingestion")
 
     def availability(self) -> RunnerAvailability:
-        """Report public request support while execution remains unavailable."""
+        """Report whether the public ingestion service API is installed."""
         try:
             runtime, ingestion = self._api()
             if not all(
-                hasattr(runtime, name) for name in ("Runtime", "IngestionRequest")
+                hasattr(runtime, name)
+                for name in ("Runtime", "IngestionRequest", "CancellationToken")
             ) or not hasattr(ingestion, "SourceTopicMapping"):
                 return RunnerAvailability(
                     False, "installed core lacks the public ingestion request"
                 )
         except ImportError as error:
             return RunnerAvailability(False, f"ContextMap2 is not installed: {error}")
-        return RunnerAvailability(
-            False,
-            "Public ingestion request is available; execution integration is pending.",
-        )
+        return RunnerAvailability(True, "Public ContextMap2 IngestionService is available.")
 
     def discover(self, workspace_root: Path, *, profile: str) -> IngestionDiscovery:
         """Read profiles, source adapters, topics and modalities from public APIs."""
@@ -196,23 +195,85 @@ class LocalIngestionRunner:
             output_dir=str(output_dir),
             artifact_id=artifact_id,
         )
-        return PreparedIngestion(request=request, config=config, runtime=runtime)
+        return PreparedIngestion(
+            request=request,
+            config=config,
+            runtime=runtime,
+            cancellation=runtime_api.CancellationToken(),
+        )
 
     def preflight(self, prepared: PreparedIngestion) -> IngestionPreflight:
-        """Keep execution unavailable until the service adapter is connected."""
-        del prepared
-        reason = "Public ingestion execution adapter is not connected yet."
-        return IngestionPreflight(ok=False, problems=(reason,))
+        """Delegate source and domain checks to the public service."""
+        runtime_api, _ = self._api()
+        try:
+            service = prepared.runtime.ingestion(prepared.config)
+        except (
+            runtime_api.BackendUnavailableError,
+            runtime_api.CompositionError,
+            runtime_api.ConfigurationError,
+        ) as error:
+            return IngestionPreflight(
+                ok=False,
+                identity=prepared.identity,
+                problems=(str(error),),
+                detail="Runtime could not compose the selected source adapter.",
+            )
+        report = service.preflight(prepared.request)
+        return IngestionPreflight(
+            ok=report.ok,
+            identity=report.identity,
+            problems=tuple(f"{problem.path}: {problem.message}" for problem in report.problems),
+            warnings=tuple(report.warnings),
+            capabilities=dict(report.capabilities),
+        )
 
     def run(
         self,
         prepared: PreparedIngestion,
         *,
         emit: ProgressSink,
-        cancel_event: Event,
     ) -> IngestionResult:
-        """Never execute a substitute ingestion runner."""
-        del prepared, emit, cancel_event
-        return IngestionResult(
-            status="unsupported", detail="Public ingestion service not connected"
+        """Run the public service; unexpected exceptions intentionally propagate."""
+        service = prepared.runtime.ingestion(prepared.config)
+
+        class Sink:
+            def emit(self, event: Any) -> None:
+                emit(
+                    IngestionEvent(
+                        kind=event.kind,
+                        sequence=event.sequence,
+                        time=event.time,
+                        stage_id=event.stage_id,
+                        data=dict(event.data),
+                    )
+                )
+
+        result = service.run(
+            prepared.request,
+            event_sink=Sink(),
+            cancellation=prepared.cancellation,
         )
+        artifact = None
+        if result.artifact_id is not None and result.artifact_path is not None:
+            artifact = ArtifactRef(
+                sequence_name=result.sequence_name,
+                artifact_id=result.artifact_id,
+                path=Path(result.artifact_path),
+            )
+        return IngestionResult(
+            status=result.status,
+            artifact=artifact,
+            observation_counts=dict(result.observation_counts),
+            warnings=tuple(result.warnings),
+            request_identity=result.request_identity,
+            artifact_id=result.artifact_id,
+            artifact_path=result.artifact_path,
+            content_hash=result.content_hash,
+            diagnostics=dict(result.diagnostics),
+            metrics=result.metrics.to_document(),
+            failure=None if result.failure is None else result.failure.to_document(),
+        )
+
+    def cancel(self, prepared: PreparedIngestion) -> None:
+        """Forward the UI request to the core cancellation token."""
+        prepared.cancellation.cancel("requested by user")

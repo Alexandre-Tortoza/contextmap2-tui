@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from threading import Event
 from typing import ClassVar
 from uuid import uuid4
 
@@ -42,7 +42,8 @@ class IngestionScreen(Screen[None]):
         self._runner = runner
         self._workspace_root = workspace_root
         self._artifact_id = uuid4().hex
-        self._cancel_event = Event()
+        self._ingestion_running = False
+        self._active_prepared: PreparedIngestion | None = None
         self._result: IngestionResult | None = None
         self._prepared: PreparedIngestion | None = None
         self._discovery_error = ""
@@ -231,14 +232,20 @@ class IngestionScreen(Screen[None]):
             return
         report = self._runner.preflight(prepared)
         lines = ["Preflight: OK" if report.ok else "Preflight: FAILED"]
+        if report.identity:
+            lines.append(f"request identity: {report.identity}")
         lines.extend(f"- problem: {item}" for item in report.problems)
         lines.extend(f"- warning: {item}" for item in report.warnings)
+        if report.capabilities:
+            lines.append("source capabilities: " + json.dumps(report.capabilities, sort_keys=True))
         if report.detail:
             lines.append(report.detail)
         self.query_one("#preflight-result", Static).update("\n".join(lines))
 
     @on(Button.Pressed, "#run-ingestion")
     def _run_pressed(self) -> None:
+        if self._ingestion_running:
+            return
         prepared = self._refresh_effective_config()
         if prepared is None:
             self.query_one("#execution-status", Static).update("Complete the request first.")
@@ -249,42 +256,74 @@ class IngestionScreen(Screen[None]):
                 "Cannot run: " + "; ".join(preflight.problems)
             )
             return
-        self._cancel_event = Event()
+        self._ingestion_running = True
+        self._active_prepared = prepared
         self._result = None
+        self.query_one("#run-ingestion", Button).disabled = True
+        self.query_one("#preflight", Button).disabled = True
         self.query_one("#open-result", Button).disabled = True
-        self.query_one("#ingestion-progress", ProgressBar).update(progress=0)
+        self.query_one("#ingestion-progress", ProgressBar).update(total=100, progress=0)
         self.query_one("#execution-log", RichLog).clear()
         self.query_one("#execution-status", Static).update("Running...")
         self._execute(prepared)
 
     @work(thread=True, exclusive=True, group="ingestion")
     def _execute(self, prepared: PreparedIngestion) -> None:
-        result = self._runner.run(
-            prepared,
-            emit=self._emit_from_worker,
-            cancel_event=self._cancel_event,
-        )
+        try:
+            result = self._runner.run(prepared, emit=self._emit_from_worker)
+        except Exception as error:
+            self.app.call_from_thread(self._execution_crashed, error)
+            raise
         self.app.call_from_thread(self._finish_execution, result)
+
+    def _execution_crashed(self, error: Exception) -> None:
+        self._ingestion_running = False
+        self._active_prepared = None
+        self.query_one("#run-ingestion", Button).disabled = False
+        self.query_one("#preflight", Button).disabled = False
+        self.query_one("#execution-status", Static).update(
+            f"Unexpected execution error (bug): {type(error).__name__}: {error}"
+        )
 
     def _emit_from_worker(self, event: IngestionEvent) -> None:
         self.app.call_from_thread(self._handle_event, event)
 
     def _handle_event(self, event: IngestionEvent) -> None:
         """Apply one progress event on the Textual event loop."""
-        self.query_one("#execution-log", RichLog).write(f"[{event.phase}] {event.message}")
-        if event.progress_percent is not None:
-            progress = min(100.0, max(0.0, event.progress_percent))
-            self.query_one("#ingestion-progress", ProgressBar).update(progress=progress)
+        self.query_one("#execution-log", RichLog).write(
+            json.dumps(
+                {
+                    "sequence": event.sequence,
+                    "time": event.time,
+                    "kind": event.kind,
+                    "stage_id": event.stage_id,
+                    "data": dict(event.data),
+                },
+                sort_keys=True,
+            )
+        )
 
     def _finish_execution(self, result: IngestionResult) -> None:
+        self._ingestion_running = False
+        self._active_prepared = None
+        self.query_one("#run-ingestion", Button).disabled = False
+        self.query_one("#preflight", Button).disabled = False
         self._result = result
         self.query_one("#execution-status", Static).update(f"Status: {result.status}")
         if result.status == "completed":
-            self.query_one("#ingestion-progress", ProgressBar).update(progress=100)
+            self.query_one("#ingestion-progress", ProgressBar).update(total=100, progress=100)
         counts = ", ".join(
             f"{name}={count}" for name, count in sorted(result.observation_counts.items())
         )
         lines = [f"status: {result.status}"]
+        if result.request_identity:
+            lines.append(f"request identity: {result.request_identity}")
+        if result.artifact_id:
+            lines.append(f"artifact id: {result.artifact_id}")
+        if result.artifact_path:
+            lines.append(f"artifact path: {result.artifact_path}")
+        if result.content_hash:
+            lines.append(f"content hash: {result.content_hash}")
         if counts:
             lines.append(f"observations: {counts}")
         if result.warnings:
@@ -292,6 +331,12 @@ class IngestionScreen(Screen[None]):
             lines.extend(f"- {warning}" for warning in result.warnings)
         if result.detail:
             lines.append(result.detail)
+        if result.diagnostics:
+            lines.append("diagnostics: " + json.dumps(result.diagnostics, default=str))
+        if result.metrics:
+            lines.append("metrics: " + json.dumps(result.metrics, default=str))
+        if result.failure:
+            lines.append("failure: " + json.dumps(result.failure, default=str))
         if result.artifact is not None and result.status == "completed":
             try:
                 overview = self._client.artifact_overview(result.artifact)
@@ -302,12 +347,14 @@ class IngestionScreen(Screen[None]):
                     f"artifact: {overview.ref.sequence_name}/{overview.ref.artifact_id} "
                     f"(integrity={'OK' if overview.integrity_ok else 'problems'})"
                 )
-                self.query_one("#open-result", Button).disabled = False
+                self.query_one("#open-result", Button).disabled = not overview.integrity_ok
         self.query_one("#ingestion-result", Static).update("\n".join(lines))
 
     @on(Button.Pressed, "#cancel-ingestion")
     def _cancel_pressed(self) -> None:
-        self._cancel_event.set()
+        if self._active_prepared is None:
+            return
+        self._runner.cancel(self._active_prepared)
         self.query_one("#execution-status", Static).update("Cancellation requested...")
 
     @on(Button.Pressed, "#open-result")

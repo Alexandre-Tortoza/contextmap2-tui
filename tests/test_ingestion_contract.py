@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from importlib.util import find_spec
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -108,6 +110,10 @@ def test_core_composition_reports_missing_optional_dependency(tmp_path: Path) ->
     with pytest.raises(core.BackendUnavailableError, match="optional module 'rosbags'"):
         core.Runtime(workspace=tmp_path).ingestion(prepared.config)
 
+    report = runner.preflight(prepared)
+    assert not report.ok
+    assert any("rosbags" in problem for problem in report.problems)
+
 
 def test_window_validation_is_owned_by_core(tmp_path: Path) -> None:
     pytest.importorskip("contextmap.runtime")
@@ -130,3 +136,166 @@ def test_unknown_backend_and_calibration_file_are_explicit(tmp_path: Path) -> No
     fields["calibration_path"] = str(tmp_path / "calibration.yaml")
     with pytest.raises(ValueError, match="calibration"):
         runner.prepare(fields, workspace_root=tmp_path, profile="canonical/1")
+
+
+def test_public_service_preflight_run_and_event_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    core = pytest.importorskip("contextmap.runtime")
+    ingestion = pytest.importorskip("contextmap.ingestion")
+    shared = pytest.importorskip("contextmap.shared")
+
+    class ScriptedAdapter:
+        fail_source = False
+        bad_data = False
+        cancel_token: Any = None
+
+        def __init__(self, config: object) -> None:
+            self.config = config
+
+        def capabilities(self) -> object:
+            return ingestion.SourceAdapterCapabilities(rgb=True)
+
+        def read_observations(self) -> object:
+            if self.fail_source:
+                raise RuntimeError("scripted source failure")
+            if self.cancel_token is not None:
+                self.cancel_token.cancel("scripted mid-read cancellation")
+            yield ingestion.ImageObservation(
+                observation_id=ingestion.SourceObservationId("frame-1"),
+                sensor_id=ingestion.SensorId("camera"),
+                frame_id=ingestion.FrameId("camera_optical"),
+                timestamp=shared.SourceTimestamp(seconds=1, nanoseconds=0, clock_id="fake:header"),
+                provenance=ingestion.SourceProvenance(
+                    source_type="fake", source_path="fake.bag", source_topic="/camera"
+                ),
+                width=2,
+                height=1,
+                encoding=ingestion.ImageEncoding.RGB8,
+                data=b"short" if self.bad_data else bytes(range(6)),
+            )
+
+        def read_calibration(self) -> None:
+            return None
+
+        def warnings(self) -> tuple[()]:
+            return ()
+
+        def content_hash(self) -> str:
+            return "sha256:scripted-source"
+
+    runner = LocalIngestionRunner()
+    monkeypatch.setattr(
+        runner,
+        "_api",
+        lambda: (
+            SimpleNamespace(
+                Runtime=lambda workspace: core.Runtime(
+                    workspace=workspace, adapter_factory=ScriptedAdapter
+                ),
+                IngestionRequest=core.IngestionRequest,
+                CancellationToken=core.CancellationToken,
+                BackendUnavailableError=core.BackendUnavailableError,
+                CompositionError=core.CompositionError,
+                ConfigurationError=core.ConfigurationError,
+            ),
+            ingestion,
+        ),
+    )
+    source = tmp_path / "source.bag"
+    source.write_bytes(b"fixture")
+    fields = _fields(tmp_path)
+    fields["topics.lidar"] = ""
+    fields["required_topics"] = "rgb"
+    fields["timestamp_clock_id"] = "fake:header"
+    fields["window_clock_id"] = ""
+    fields["window_start_seconds"] = ""
+    fields["window_end_seconds"] = ""
+    prepared = runner.prepare(fields, workspace_root=tmp_path, profile="canonical/1")
+
+    report = runner.preflight(prepared)
+    assert report.ok
+    assert report.identity == prepared.identity
+    events: list[Any] = []
+    result = runner.run(prepared, emit=events.append)
+
+    assert result.status == "completed"
+    assert result.request_identity == prepared.identity
+    assert result.artifact is not None
+    assert result.artifact_id == result.artifact.artifact_id
+    assert result.artifact_path == str(result.artifact.path)
+    assert result.content_hash
+    assert result.observation_counts["image"] == 1
+    assert result.metrics["observations_read"] == 1
+    assert events[0].kind == "ingestion.planned"
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+    reader = ingestion.SequenceArtifactReader(result.artifact.path)
+    assert reader.manifest.artifact_id == result.artifact_id
+
+    cancelled_fields = dict(fields, artifact_id="cancelled-artifact")
+    cancelled = runner.prepare(cancelled_fields, workspace_root=tmp_path, profile="canonical/1")
+    runner.cancel(cancelled)
+    cancelled_result = runner.run(cancelled, emit=lambda event: None)
+    assert cancelled_result.status == "cancelled"
+    assert cancelled_result.failure is not None
+    assert cancelled_result.failure["category"] == "cancelled"
+    assert not Path(cancelled.request.output_dir).exists()
+
+    ScriptedAdapter.fail_source = True
+    failed = runner.prepare(
+        dict(fields, artifact_id="source-failure"),
+        workspace_root=tmp_path,
+        profile="canonical/1",
+    )
+    failed_result = runner.run(failed, emit=lambda event: None)
+    assert failed_result.status == "failed"
+    assert failed_result.failure is not None
+    assert failed_result.failure["category"] == "source"
+    assert failed_result.artifact is None
+    ScriptedAdapter.fail_source = False
+
+    conflicting = runner.prepare(
+        dict(fields, artifact_id="conflicting", output_dir=str(result.artifact.path)),
+        workspace_root=tmp_path,
+        profile="canonical/1",
+    )
+    assert any("already exists" in problem for problem in runner.preflight(conflicting).problems)
+    conflicting_result = runner.run(conflicting, emit=lambda event: None)
+    assert conflicting_result.status == "failed"
+    assert conflicting_result.failure is not None
+    assert conflicting_result.failure["category"] == "output"
+
+    invalid = runner.prepare(
+        dict(fields, artifact_id="missing-topic", required_topics="rgb,lidar"),
+        workspace_root=tmp_path,
+        profile="canonical/1",
+    )
+    assert any("required topic" in problem for problem in runner.preflight(invalid).problems)
+    invalid_result = runner.run(invalid, emit=lambda event: None)
+    assert invalid_result.status == "failed"
+    assert invalid_result.failure is not None
+    assert invalid_result.failure["category"] == "configuration"
+
+    ScriptedAdapter.bad_data = True
+    invalid_observation = runner.prepare(
+        dict(fields, artifact_id="validation-failure", validation_on_problems="fail"),
+        workspace_root=tmp_path,
+        profile="canonical/1",
+    )
+    validation_result = runner.run(invalid_observation, emit=lambda event: None)
+    assert validation_result.status == "failed"
+    assert validation_result.failure is not None
+    assert validation_result.failure["category"] == "validation"
+    assert not Path(invalid_observation.request.output_dir).exists()
+
+    ScriptedAdapter.bad_data = False
+    interrupted = runner.prepare(
+        dict(fields, artifact_id="interrupted"),
+        workspace_root=tmp_path,
+        profile="canonical/1",
+    )
+    ScriptedAdapter.cancel_token = interrupted.cancellation
+    interrupted_result = runner.run(interrupted, emit=lambda event: None)
+    assert interrupted_result.status == "cancelled"
+    assert not Path(interrupted.request.output_dir).exists()
+    assert not tuple(Path(interrupted.request.output_dir).parent.glob(".tmp-interrupted-*"))

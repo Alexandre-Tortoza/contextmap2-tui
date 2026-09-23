@@ -39,6 +39,7 @@ class PreparedIngestion:
     request: Any
     config: Any
     runtime: Any
+    cancellation: Any = None
 
     @property
     def identity(self) -> str:
@@ -72,15 +73,19 @@ class IngestionPreflight:
     problems: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     detail: str = ""
+    identity: str = ""
+    capabilities: Mapping[str, bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class IngestionEvent:
     """Structured progress event projected for Textual."""
 
-    phase: str
-    message: str
-    progress_percent: float | None = None
+    kind: str
+    sequence: int
+    time: str
+    stage_id: str | None
+    data: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +97,13 @@ class IngestionResult:
     observation_counts: Mapping[str, int] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
     detail: str = ""
+    request_identity: str = ""
+    artifact_id: str | None = None
+    artifact_path: str | None = None
+    content_hash: str | None = None
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    metrics: Mapping[str, Any] = field(default_factory=dict)
+    failure: Mapping[str, Any] | None = None
 
 
 ProgressSink = Callable[[IngestionEvent], None]
@@ -128,9 +140,12 @@ class IngestionRunner(Protocol):
         prepared: PreparedIngestion,
         *,
         emit: ProgressSink,
-        cancel_event: Event,
     ) -> IngestionResult:
         """Execute the public request outside the Textual event loop."""
+        ...
+
+    def cancel(self, prepared: PreparedIngestion) -> None:
+        """Request cancellation through the runner's public-core handle."""
         ...
 
 
@@ -170,11 +185,14 @@ class UnavailableIngestionRunner:
         prepared: PreparedIngestion,
         *,
         emit: ProgressSink,
-        cancel_event: Event,
     ) -> IngestionResult:
         """Never construct an alternate ingestion engine."""
-        del prepared, emit, cancel_event
+        del prepared, emit
         return IngestionResult(status="unsupported", detail=self.reason)
+
+    def cancel(self, prepared: PreparedIngestion) -> None:
+        """There is no in-flight service to cancel."""
+        del prepared
 
 
 @dataclass(slots=True)
@@ -186,6 +204,7 @@ class FakeIngestionRunner:
     events: Sequence[IngestionEvent] = ()
     available: bool = True
     prepared_fields: Mapping[str, str] | None = None
+    run_calls: int = 0
 
     def availability(self) -> RunnerAvailability:
         """Report deterministic test availability."""
@@ -220,7 +239,7 @@ class FakeIngestionRunner:
             output_dir=fields.get("output_dir", ""),
             to_document=lambda: dict(fields),
         )
-        return PreparedIngestion(request=request, config=None, runtime=None)
+        return PreparedIngestion(request=request, config=None, runtime=None, cancellation=Event())
 
     def preflight(self, prepared: PreparedIngestion) -> IngestionPreflight:
         """Return the configured report."""
@@ -232,17 +251,20 @@ class FakeIngestionRunner:
         prepared: PreparedIngestion,
         *,
         emit: ProgressSink,
-        cancel_event: Event,
     ) -> IngestionResult:
         """Emit configured progress and return the configured result."""
-        del prepared
-        if cancel_event.is_set():
+        self.run_calls += 1
+        if prepared.cancellation.is_set():
             return IngestionResult(status="cancelled", detail="cancelled before execution")
         for event in self.events:
-            if cancel_event.is_set():
+            if prepared.cancellation.is_set():
                 return IngestionResult(status="cancelled", detail="cancelled during execution")
             emit(event)
         return self.result
+
+    def cancel(self, prepared: PreparedIngestion) -> None:
+        """Cancel the fake run at the next boundary."""
+        prepared.cancellation.set()
 
 
 def parse_required_topics(value: str) -> frozenset[str]:
