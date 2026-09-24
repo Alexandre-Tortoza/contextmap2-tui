@@ -1,4 +1,4 @@
-"""Presentation contracts for configuring and coordinating Ingestion."""
+"""Presentation boundary for public ContextMap2 ingestion requests."""
 
 from __future__ import annotations
 
@@ -6,51 +6,60 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
-from typing import Protocol, runtime_checkable
+from types import SimpleNamespace
+from typing import Any, Protocol, runtime_checkable
 
 from contextmap_tui.models import ArtifactRef
 
-_TOPIC_FIELDS = ("rgb", "camera_info", "lidar", "imu", "pose")
-_SOURCE_TYPES = frozenset({"ros1_bag", "ros2_bag", "dataset"})
-_REFERENCE_MODALITIES = frozenset({"image", "lidar", "imu", "external_pose"})
+
+@dataclass(frozen=True, slots=True)
+class SourceBackendChoice:
+    """One source adapter reported by Runtime capability discovery."""
+
+    backend_id: str
+    available: bool
+    reasons: tuple[str, ...] = ()
+    install_hint: str = ""
 
 
 @dataclass(frozen=True, slots=True)
-class IngestionRequest:
-    """Explicit, auditable input to one future core Ingestion run."""
+class IngestionDiscovery:
+    """Public runtime choices needed to compose the ingestion form."""
 
-    source_type: str
-    source_path: Path
-    sequence_name: str
-    workspace_root: Path
-    topics: Mapping[str, str]
-    required_topics: frozenset[str] = frozenset()
-    timestamp_clock_id: str | None = None
-    calibration_path: Path | None = None
-    reference_modality: str = "image"
-    tolerance_nanoseconds: int = 50_000_000
+    profiles: tuple[str, ...]
+    backends: tuple[SourceBackendChoice, ...]
+    topic_fields: tuple[str, ...]
+    modalities: tuple[str, ...]
 
-    def effective_config(self) -> Mapping[str, object]:
-        """Return a deterministic primitive projection for inspection."""
+
+@dataclass(frozen=True, slots=True)
+class PreparedIngestion:
+    """Opaque public core request and its resolved runtime context."""
+
+    request: Any
+    config: Any
+    runtime: Any
+    cancellation: Any = None
+
+    @property
+    def identity(self) -> str:
+        """Return the identity computed by the core request."""
+        return str(self.request.identity)
+
+    @property
+    def preview(self) -> Mapping[str, object]:
+        """Expose the core's own request document plus publication location."""
         return {
-            "source_type": self.source_type,
-            "source_path": str(self.source_path),
-            "sequence_name": self.sequence_name,
-            "workspace_root": str(self.workspace_root),
-            "topics": dict(sorted(self.topics.items())),
-            "required_topics": sorted(self.required_topics),
-            "timestamp_clock_id": self.timestamp_clock_id,
-            "calibration_path": (
-                str(self.calibration_path) if self.calibration_path is not None else None
-            ),
-            "reference_modality": self.reference_modality,
-            "tolerance_nanoseconds": self.tolerance_nanoseconds,
+            "request_identity": self.identity,
+            "artifact_id": self.request.artifact_id,
+            "output_dir": self.request.output_dir,
+            **self.request.to_document(),
         }
 
 
 @dataclass(frozen=True, slots=True)
 class RunnerAvailability:
-    """Whether a production-capable Ingestion runner is currently available."""
+    """Whether a public ingestion runner can be used in this environment."""
 
     available: bool
     detail: str
@@ -58,32 +67,43 @@ class RunnerAvailability:
 
 @dataclass(frozen=True, slots=True)
 class IngestionPreflight:
-    """Cheap validation result produced before decoding a full source."""
+    """Presentation projection of the core's preflight report."""
 
     ok: bool
     problems: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     detail: str = ""
+    identity: str = ""
+    capabilities: Mapping[str, bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class IngestionEvent:
-    """Progress evidence emitted by an Ingestion runner."""
+    """Structured progress event projected for Textual."""
 
-    phase: str
-    message: str
-    progress_percent: float | None = None
+    kind: str
+    sequence: int
+    time: str
+    stage_id: str | None
+    data: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class IngestionResult:
-    """Terminal state of one requested Ingestion execution."""
+    """Terminal state shown by the console."""
 
     status: str
     artifact: ArtifactRef | None = None
     observation_counts: Mapping[str, int] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
     detail: str = ""
+    request_identity: str = ""
+    artifact_id: str | None = None
+    artifact_path: str | None = None
+    content_hash: str | None = None
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
+    metrics: Mapping[str, Any] = field(default_factory=dict)
+    failure: Mapping[str, Any] | None = None
 
 
 ProgressSink = Callable[[IngestionEvent], None]
@@ -91,121 +111,162 @@ ProgressSink = Callable[[IngestionEvent], None]
 
 @runtime_checkable
 class IngestionRunner(Protocol):
-    """Execution boundary implemented by a stable core orchestration API."""
+    """Presentation-facing boundary over public runtime ingestion."""
 
     def availability(self) -> RunnerAvailability:
-        """Report whether execution is supported in the installed core."""
+        """Report whether the public service is installed."""
         ...
 
-    def preflight(self, request: IngestionRequest) -> IngestionPreflight:
-        """Validate a request without performing the full run."""
+    def discover(self, workspace_root: Path, *, profile: str) -> IngestionDiscovery:
+        """Return options from public runtime/capability contracts."""
+        ...
+
+    def prepare(
+        self,
+        fields: Mapping[str, str],
+        *,
+        workspace_root: Path,
+        profile: str,
+    ) -> PreparedIngestion:
+        """Build a public core request from raw form values."""
+        ...
+
+    def preflight(self, prepared: PreparedIngestion) -> IngestionPreflight:
+        """Validate the public request through the core service."""
         ...
 
     def run(
         self,
-        request: IngestionRequest,
+        prepared: PreparedIngestion,
         *,
         emit: ProgressSink,
-        cancel_event: Event,
     ) -> IngestionResult:
-        """Execute Ingestion without placing source/scientific logic in the TUI."""
+        """Execute the public request outside the Textual event loop."""
+        ...
+
+    def cancel(self, prepared: PreparedIngestion) -> None:
+        """Request cancellation through the runner's public-core handle."""
         ...
 
 
 @dataclass(slots=True)
 class UnavailableIngestionRunner:
-    """Explicit production placeholder while the core lacks a public runner."""
+    """Explicit fallback when the installed core lacks its public service."""
 
-    reason: str = (
-        "The installed ContextMap2 core does not expose a stable public Ingestion runner yet."
-    )
+    reason: str = "The installed ContextMap2 core has no public Ingestion service."
 
     def availability(self) -> RunnerAvailability:
-        """Report the missing core capability."""
+        """Report why no public service is available."""
         return RunnerAvailability(available=False, detail=self.reason)
 
-    def preflight(self, request: IngestionRequest) -> IngestionPreflight:
+    def discover(self, workspace_root: Path, *, profile: str) -> IngestionDiscovery:
+        """Return no selectable backend."""
+        del workspace_root, profile
+        return IngestionDiscovery((), (), (), ())
+
+    def prepare(
+        self,
+        fields: Mapping[str, str],
+        *,
+        workspace_root: Path,
+        profile: str,
+    ) -> PreparedIngestion:
+        """Reject a request when the public service is absent."""
+        del fields, workspace_root, profile
+        raise RuntimeError(self.reason)
+
+    def preflight(self, prepared: PreparedIngestion) -> IngestionPreflight:
         """Return an explicit unsupported result."""
-        del request
+        del prepared
         return IngestionPreflight(ok=False, problems=(self.reason,), detail=self.reason)
 
     def run(
         self,
-        request: IngestionRequest,
+        prepared: PreparedIngestion,
         *,
         emit: ProgressSink,
-        cancel_event: Event,
     ) -> IngestionResult:
-        """Reject execution rather than silently implementing a second engine."""
-        del request, emit, cancel_event
+        """Never construct an alternate ingestion engine."""
+        del prepared, emit
         return IngestionResult(status="unsupported", detail=self.reason)
+
+    def cancel(self, prepared: PreparedIngestion) -> None:
+        """There is no in-flight service to cancel."""
+        del prepared
 
 
 @dataclass(slots=True)
 class FakeIngestionRunner:
-    """Deterministic runner for headless TUI tests."""
+    """Deterministic presentation boundary for headless UI tests."""
 
     result: IngestionResult
     preflight_result: IngestionPreflight = IngestionPreflight(ok=True)
     events: Sequence[IngestionEvent] = ()
     available: bool = True
+    prepared_fields: Mapping[str, str] | None = None
+    run_calls: int = 0
 
     def availability(self) -> RunnerAvailability:
-        """Return deterministic availability."""
+        """Report deterministic test availability."""
         return RunnerAvailability(
             available=self.available,
             detail="deterministic fake runner" if self.available else "fake runner unavailable",
         )
 
-    def preflight(self, request: IngestionRequest) -> IngestionPreflight:
-        """Return the configured preflight result."""
-        del request
+    def discover(self, workspace_root: Path, *, profile: str) -> IngestionDiscovery:
+        """Provide stable choices to exercise the form without the core."""
+        del workspace_root, profile
+        return IngestionDiscovery(
+            profiles=("canonical/1",),
+            backends=(SourceBackendChoice("ros1_bag", True),),
+            topic_fields=("rgb", "camera_info", "lidar", "imu", "pose"),
+            modalities=("image", "lidar", "imu", "external_pose"),
+        )
+
+    def prepare(
+        self,
+        fields: Mapping[str, str],
+        *,
+        workspace_root: Path,
+        profile: str,
+    ) -> PreparedIngestion:
+        """Echo presentation values through a fake core-shaped request."""
+        del workspace_root, profile
+        self.prepared_fields = dict(fields)
+        request = SimpleNamespace(
+            identity="fake-request",
+            artifact_id=fields.get("artifact_id", "fake-artifact"),
+            output_dir=fields.get("output_dir", ""),
+            to_document=lambda: dict(fields),
+        )
+        return PreparedIngestion(request=request, config=None, runtime=None, cancellation=Event())
+
+    def preflight(self, prepared: PreparedIngestion) -> IngestionPreflight:
+        """Return the configured report."""
+        del prepared
         return self.preflight_result
 
     def run(
         self,
-        request: IngestionRequest,
+        prepared: PreparedIngestion,
         *,
         emit: ProgressSink,
-        cancel_event: Event,
     ) -> IngestionResult:
-        """Emit configured progress and return configured result."""
-        del request
-        if cancel_event.is_set():
+        """Emit configured progress and return the configured result."""
+        self.run_calls += 1
+        if prepared.cancellation.is_set():
             return IngestionResult(status="cancelled", detail="cancelled before execution")
         for event in self.events:
-            if cancel_event.is_set():
+            if prepared.cancellation.is_set():
                 return IngestionResult(status="cancelled", detail="cancelled during execution")
             emit(event)
         return self.result
 
-
-def validate_ingestion_request(request: IngestionRequest) -> tuple[str, ...]:
-    """Validate only presentation/local constraints, leaving domain checks to the core."""
-    problems: list[str] = []
-    if request.source_type not in _SOURCE_TYPES:
-        problems.append(f"unsupported source_type: {request.source_type!r}")
-    if not request.sequence_name.strip():
-        problems.append("sequence_name must not be empty")
-    if not request.source_path.exists():
-        problems.append(f"source path does not exist: {request.source_path}")
-    if not request.workspace_root.exists():
-        problems.append(f"workspace root does not exist: {request.workspace_root}")
-    if request.calibration_path is not None and not request.calibration_path.exists():
-        problems.append(f"calibration path does not exist: {request.calibration_path}")
-    unknown_topics = request.required_topics - set(_TOPIC_FIELDS)
-    if unknown_topics:
-        problems.append(f"unknown required topic fields: {sorted(unknown_topics)}")
-    for required in sorted(request.required_topics):
-        if not request.topics.get(required, "").strip():
-            problems.append(f"required topic {required!r} has no mapping")
-    if request.reference_modality not in _REFERENCE_MODALITIES:
-        problems.append(f"unsupported reference modality: {request.reference_modality!r}")
-    if request.tolerance_nanoseconds < 0:
-        problems.append("tolerance_nanoseconds must be >= 0")
-    return tuple(problems)
+    def cancel(self, prepared: PreparedIngestion) -> None:
+        """Cancel the fake run at the next boundary."""
+        prepared.cancellation.set()
 
 
 def parse_required_topics(value: str) -> frozenset[str]:
-    """Parse a comma-separated required topic list."""
+    """Parse a comma-separated presentation field."""
     return frozenset(item.strip() for item in value.split(",") if item.strip())

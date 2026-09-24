@@ -1,11 +1,16 @@
-"""Presentation boundary for the future ContextMap2 global runtime."""
+"""Presentation boundary for the public ContextMap2 runtime.
+
+Plans, preflight reports, execution results, run summaries and run records are the public
+``contextmap.runtime`` values themselves, carried opaquely. The TUI renders their attributes and
+never keeps a second schema, topology or lineage model of its own.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from threading import Event
-from typing import Never, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Never, Protocol, runtime_checkable
 
 
 class RuntimeOperationError(RuntimeError):
@@ -18,7 +23,30 @@ class RuntimeAvailability:
 
     available: bool
     detail: str
-    api_version: str | None = None
+    contextmap_version: str | None = None
+    schemas: Mapping[str, str] = field(default_factory=dict)
+    profiles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class BackendCapability:
+    """One backend reported by a public RuntimeComponent."""
+
+    backend_id: str
+    available: bool
+    reasons: tuple[str, ...] = ()
+    requires: tuple[str, ...] = ()
+    secrets: tuple[str, ...] = ()
+    install_hint: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentCapability:
+    """One runtime variation point, preserving optional backend=None."""
+
+    component_id: str
+    optional: bool
+    backends: tuple[BackendCapability, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,116 +59,129 @@ class StageCapability:
     optional: bool
     backend_options: tuple[str, ...] = ()
     detail: str = ""
+    capability: str = ""
+    implemented: bool = True
+    default_enabled: bool = True
+    components: tuple[ComponentCapability, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class PipelineStageView:
-    """One runtime-resolved stage in the effective pipeline configuration."""
+class RuntimeScope:
+    """What one execution covers, handed verbatim to ``Runtime.resolve_plan``/``preflight``/``run``.
 
-    stage_id: str
-    enabled: bool
-    backend: str | None
-    inputs: tuple[str, ...] = ()
-    parameters: Mapping[str, object] = field(default_factory=dict)
+    Attributes:
+        targets: Stages to produce, or ``None`` for the complete pipeline.
+        provided: Exact upstream artifacts by stage, as persisted ``ArtifactRef`` documents read
+            from a run record. Mutually exclusive with configured ``inputs.selections``; the
+            runtime rejects the combination.
+        catalog: Catalog file listing the runs selections may resolve against.
+    """
 
-
-@dataclass(frozen=True, slots=True)
-class PipelineConfigView:
-    """Read/edit projection of a runtime-owned pipeline configuration."""
-
-    config_id: str
-    stages: tuple[PipelineStageView, ...]
+    targets: tuple[str, ...] | None = None
+    provided: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    catalog: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimePreflight:
-    """Runtime-owned preflight result before heavy execution."""
+class RuntimeReuse:
+    """Inputs of ``Runtime.reuse_policy``; the policy itself is built by the core."""
 
-    ok: bool
-    problems: tuple[str, ...] = ()
-    warnings: tuple[str, ...] = ()
-    detail: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeEvent:
-    """Progress event emitted by global runtime execution."""
-
-    stage_id: str
-    message: str
-    progress_percent: float | None = None
+    index: str
+    code_identity: str
+    force: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
-class PipelineRunResult:
-    """Terminal state returned by one global pipeline execution."""
+class RuntimePipelineResolution:
+    """Opaque public EffectiveConfig and ResolvedPipelinePlan plus resolution inputs."""
 
-    status: str
-    run_id: str | None = None
-    output_artifacts: tuple[str, ...] = ()
-    reused_artifacts: tuple[str, ...] = ()
-    detail: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class RunRecord:
-    """Persisted run/lineage projection supplied by the runtime."""
-
-    run_id: str
-    status: str
-    effective_config: Mapping[str, object]
-    upstream_artifacts: tuple[str, ...]
-    output_artifacts: tuple[str, ...]
-    metrics: Mapping[str, object] = field(default_factory=dict)
-    detail: str = ""
+    profile: str
+    files: tuple[str, ...]
+    overrides: tuple[str, ...]
+    config: Any
+    plan: Any
+    scope: RuntimeScope = RuntimeScope()
 
 
-RuntimeProgressSink = Callable[[RuntimeEvent], None]
+@runtime_checkable
+class RuntimeCancellation(Protocol):
+    """Cooperative cancellation handle; the local gateway hands out the core token."""
+
+    def cancel(self, reason: str = "cancelled") -> None:
+        """Ask the run to stop before its next stage."""
+        ...
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether cancellation was requested."""
+        ...
+
+
+RuntimeEventSink = Callable[[Any], None]
+"""Receives each public ``ExecutionEvent`` after the runtime persisted it."""
 
 
 @runtime_checkable
 class RuntimeGateway(Protocol):
-    """TUI-facing adapter over a stable public contextmap.runtime contract."""
+    """TUI-facing adapter over the public ``contextmap.runtime.Runtime`` facade."""
 
     def availability(self) -> RuntimeAvailability:
         """Report installed runtime compatibility."""
         ...
 
-    def capabilities(self) -> tuple[StageCapability, ...]:
+    def capabilities(self, *, profile: str | None = None) -> tuple[StageCapability, ...]:
         """Return runtime-discovered stage/backend capabilities."""
         ...
 
-    def pipeline_config(self) -> PipelineConfigView:
-        """Return the runtime-resolved effective pipeline configuration."""
-        ...
-
-    def edit_stage(
+    def resolve_pipeline(
         self,
-        config: PipelineConfigView,
-        stage_id: str,
         *,
-        enabled: bool | None = None,
-        backend: str | None = None,
-    ) -> PipelineConfigView:
-        """Ask the runtime to validate and apply a supported stage edit."""
+        profile: str,
+        files: Sequence[str] = (),
+        overrides: Sequence[str] = (),
+        scope: RuntimeScope | None = None,
+    ) -> RuntimePipelineResolution:
+        """Resolve configuration and plan through the public runtime."""
         ...
 
-    def preflight(self, config: PipelineConfigView) -> RuntimePreflight:
-        """Run lightweight runtime preflight."""
+    def apply_edit(
+        self, resolution: RuntimePipelineResolution, *, path: str, value: object
+    ) -> RuntimePipelineResolution:
+        """Apply one public RuntimeEdit and resolve again."""
+        ...
+
+    def preflight(
+        self, resolution: RuntimePipelineResolution, *, reuse: RuntimeReuse | None = None
+    ) -> Any:
+        """Return the public ``RuntimePreflightReport``; nothing is loaded."""
+        ...
+
+    def cancellation(self) -> RuntimeCancellation:
+        """Return a fresh cooperative cancellation token for one run."""
         ...
 
     def run(
         self,
-        config: PipelineConfigView,
+        resolution: RuntimePipelineResolution,
         *,
-        emit: RuntimeProgressSink,
-        cancel_event: Event,
-    ) -> PipelineRunResult:
-        """Execute the runtime plan outside the Textual event loop."""
+        events: RuntimeEventSink,
+        cancellation: RuntimeCancellation,
+        reuse: RuntimeReuse | None = None,
+        resume: str | None = None,
+    ) -> Any:
+        """Execute outside the Textual event loop; return the public ``RuntimeExecutionResult``."""
         ...
 
-    def list_runs(self) -> tuple[RunRecord, ...]:
-        """Return persisted runs in runtime-defined order."""
+    def list_runs(self) -> tuple[Any, ...]:
+        """Return public ``RuntimeRunSummary`` values in runtime order."""
+        ...
+
+    def inspect_run(self, run: str) -> Any:
+        """Return the public ``RuntimeRunRecord`` for a run id or exact run directory."""
+        ...
+
+    def run_directory(self, summary: Any) -> str | None:
+        """Return the exact directory of a listed run, so ambiguous ids are never guessed."""
         ...
 
 
@@ -157,134 +198,190 @@ class UnavailableRuntimeGateway:
     def _raise(self) -> Never:
         raise RuntimeOperationError(self.reason)
 
-    def capabilities(self) -> tuple[StageCapability, ...]:
+    def capabilities(self, *, profile: str | None = None) -> tuple[StageCapability, ...]:
         """Reject capability discovery while the runtime is unavailable."""
+        del profile
         self._raise()
 
-    def pipeline_config(self) -> PipelineConfigView:
-        """Reject configuration access while the runtime is unavailable."""
-        self._raise()
-
-    def edit_stage(
+    def resolve_pipeline(
         self,
-        config: PipelineConfigView,
-        stage_id: str,
         *,
-        enabled: bool | None = None,
-        backend: str | None = None,
-    ) -> PipelineConfigView:
-        """Reject edits rather than guessing unsupported runtime semantics."""
-        del config, stage_id, enabled, backend
+        profile: str,
+        files: Sequence[str] = (),
+        overrides: Sequence[str] = (),
+        scope: RuntimeScope | None = None,
+    ) -> RuntimePipelineResolution:
+        """Reject plan resolution while runtime is unavailable."""
+        del profile, files, overrides, scope
         self._raise()
 
-    def preflight(self, config: PipelineConfigView) -> RuntimePreflight:
+    def apply_edit(
+        self, resolution: RuntimePipelineResolution, *, path: str, value: object
+    ) -> RuntimePipelineResolution:
+        """Reject edits while runtime is unavailable."""
+        del resolution, path, value
+        self._raise()
+
+    def preflight(
+        self, resolution: RuntimePipelineResolution, *, reuse: RuntimeReuse | None = None
+    ) -> Any:
         """Reject preflight while the runtime is unavailable."""
-        del config
+        del resolution, reuse
+        self._raise()
+
+    def cancellation(self) -> RuntimeCancellation:
+        """Reject execution handles while the runtime is unavailable."""
         self._raise()
 
     def run(
         self,
-        config: PipelineConfigView,
+        resolution: RuntimePipelineResolution,
         *,
-        emit: RuntimeProgressSink,
-        cancel_event: Event,
-    ) -> PipelineRunResult:
+        events: RuntimeEventSink,
+        cancellation: RuntimeCancellation,
+        reuse: RuntimeReuse | None = None,
+        resume: str | None = None,
+    ) -> Any:
         """Reject execution while the runtime is unavailable."""
-        del config, emit, cancel_event
+        del resolution, events, cancellation, reuse, resume
         self._raise()
 
-    def list_runs(self) -> tuple[RunRecord, ...]:
+    def list_runs(self) -> tuple[Any, ...]:
         """Reject run discovery while the runtime is unavailable."""
         self._raise()
+
+    def inspect_run(self, run: str) -> Any:
+        """Reject run inspection while the runtime is unavailable."""
+        del run
+        self._raise()
+
+    def run_directory(self, summary: Any) -> str | None:
+        """No workspace is known while the runtime is unavailable."""
+        del summary
+        return None
+
+
+class FakeCancellation:
+    """Deterministic cancellation token for tests."""
+
+    def __init__(self) -> None:
+        """Create a token that is not cancelled."""
+        self.reason = ""
+        self._cancelled = False
+
+    def cancel(self, reason: str = "cancelled") -> None:
+        """Record the request."""
+        self.reason = reason
+        self._cancelled = True
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether cancellation was requested."""
+        return self._cancelled
 
 
 @dataclass(slots=True)
 class FakeRuntimeGateway:
-    """Deterministic runtime used to validate TUI behavior in CI."""
+    """Deterministic runtime used to validate TUI behavior in CI.
+
+    It returns injected public-shaped values and makes no runtime decision of its own.
+    """
 
     stage_capabilities: tuple[StageCapability, ...]
-    config: PipelineConfigView
-    preflight_result: RuntimePreflight = RuntimePreflight(ok=True)
-    run_result: PipelineRunResult = PipelineRunResult(status="completed", run_id="fake-run")
-    events: Sequence[RuntimeEvent] = ()
-    run_records: tuple[RunRecord, ...] = ()
+    resolution: RuntimePipelineResolution
+    preflight_report: Any = None
+    execution_result: Any = None
+    events: Sequence[Any] = ()
+    run_summaries: tuple[Any, ...] = ()
+    run_records: Mapping[str, Any] = field(default_factory=dict)
+    next_resolution: RuntimePipelineResolution | None = None
+    edited: list[tuple[str, object]] = field(default_factory=list)
+    scopes: list[RuntimeScope] = field(default_factory=list)
+    runs: list[dict[str, Any]] = field(default_factory=list)
+    workspace: str = "/workspace"
 
     def availability(self) -> RuntimeAvailability:
         """Report deterministic test runtime availability."""
         return RuntimeAvailability(
             available=True,
             detail="deterministic fake runtime",
-            api_version="fake",
+            contextmap_version="fake",
+            profiles=(self.resolution.profile,),
         )
 
-    def capabilities(self) -> tuple[StageCapability, ...]:
+    def capabilities(self, *, profile: str | None = None) -> tuple[StageCapability, ...]:
         """Return configured fake stage capabilities."""
+        del profile
         return self.stage_capabilities
 
-    def pipeline_config(self) -> PipelineConfigView:
-        """Return the current deterministic fake configuration."""
-        return self.config
-
-    def edit_stage(
+    def resolve_pipeline(
         self,
-        config: PipelineConfigView,
-        stage_id: str,
         *,
-        enabled: bool | None = None,
-        backend: str | None = None,
-    ) -> PipelineConfigView:
-        """Validate and apply an edit using deterministic fake runtime rules."""
-        capability = next(
-            (item for item in self.stage_capabilities if item.stage_id == stage_id),
-            None,
-        )
-        if capability is None or not capability.available:
-            raise RuntimeOperationError(f"stage is unavailable: {stage_id}")
+        profile: str,
+        files: Sequence[str] = (),
+        overrides: Sequence[str] = (),
+        scope: RuntimeScope | None = None,
+    ) -> RuntimePipelineResolution:
+        """Return the injected resolution, recording the requested scope."""
+        del profile, files, overrides
+        self.scopes.append(scope or RuntimeScope())
+        return self.resolution
 
-        stages = list(config.stages)
-        index = next((i for i, item in enumerate(stages) if item.stage_id == stage_id), None)
-        if index is None:
-            raise RuntimeOperationError(f"stage is not in resolved config: {stage_id}")
-        stage = stages[index]
+    def apply_edit(
+        self, resolution: RuntimePipelineResolution, *, path: str, value: object
+    ) -> RuntimePipelineResolution:
+        """Record a UI edit and return the injected next resolution."""
+        if not any(edit.path == path for edit in resolution.plan.editable):
+            raise RuntimeOperationError(f"path {path!r} is not declared editable")
+        self.edited.append((path, value))
+        if self.next_resolution is None:
+            raise RuntimeOperationError("no fake resolution configured for edit")
+        self.resolution = self.next_resolution
+        return self.resolution
 
-        if enabled is not None and enabled != stage.enabled:
-            if not capability.optional:
-                raise RuntimeOperationError(f"mandatory stage cannot be toggled: {stage_id}")
-            stage = replace(stage, enabled=enabled)
-        if backend is not None and backend != stage.backend:
-            if backend not in capability.backend_options:
-                raise RuntimeOperationError(
-                    f"backend {backend!r} is not supported by stage {stage_id!r}"
-                )
-            stage = replace(stage, backend=backend)
+    def preflight(
+        self, resolution: RuntimePipelineResolution, *, reuse: RuntimeReuse | None = None
+    ) -> Any:
+        """Return the injected preflight report."""
+        del resolution, reuse
+        if self.preflight_report is None:
+            raise RuntimeOperationError("no fake preflight report configured")
+        return self.preflight_report
 
-        stages[index] = stage
-        updated = PipelineConfigView(config_id=config.config_id, stages=tuple(stages))
-        self.config = updated
-        return updated
-
-    def preflight(self, config: PipelineConfigView) -> RuntimePreflight:
-        """Return the configured deterministic preflight result."""
-        del config
-        return self.preflight_result
+    def cancellation(self) -> RuntimeCancellation:
+        """Return a deterministic token."""
+        return FakeCancellation()
 
     def run(
         self,
-        config: PipelineConfigView,
+        resolution: RuntimePipelineResolution,
         *,
-        emit: RuntimeProgressSink,
-        cancel_event: Event,
-    ) -> PipelineRunResult:
-        """Emit configured events and return the deterministic run result."""
-        del config
-        if cancel_event.is_set():
-            return PipelineRunResult(status="cancelled")
+        events: RuntimeEventSink,
+        cancellation: RuntimeCancellation,
+        reuse: RuntimeReuse | None = None,
+        resume: str | None = None,
+    ) -> Any:
+        """Emit the injected events and return the injected execution result."""
+        self.runs.append({"resolution": resolution, "reuse": reuse, "resume": resume})
         for event in self.events:
-            if cancel_event.is_set():
-                return PipelineRunResult(status="cancelled")
-            emit(event)
-        return self.run_result
+            if cancellation.cancelled:
+                break
+            events(event)
+        if self.execution_result is None:
+            raise RuntimeOperationError("no fake execution result configured")
+        return self.execution_result
 
-    def list_runs(self) -> tuple[RunRecord, ...]:
-        """Return configured persisted run projections."""
-        return self.run_records
+    def list_runs(self) -> tuple[Any, ...]:
+        """Return injected run summaries."""
+        return self.run_summaries
+
+    def inspect_run(self, run: str) -> Any:
+        """Return the injected record for an exact directory or id."""
+        record = self.run_records.get(run)
+        if record is None:
+            raise RuntimeOperationError(f"no run record for {run!r}")
+        return record
+
+    def run_directory(self, summary: Any) -> str | None:
+        """Return the documented ``<workspace>/<dataset>/<run>`` location."""
+        return str(Path(self.workspace) / summary.dataset / summary.run_id)

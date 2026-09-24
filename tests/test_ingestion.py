@@ -1,70 +1,53 @@
 from pathlib import Path
-from threading import Event
+from types import SimpleNamespace
+
+import pytest
 
 from contextmap_tui.ingestion import (
     FakeIngestionRunner,
-    IngestionRequest,
     IngestionResult,
+    PreparedIngestion,
     UnavailableIngestionRunner,
     parse_required_topics,
-    validate_ingestion_request,
 )
+from contextmap_tui.integration.ingestion import LocalIngestionRunner
 
 
-def _request(tmp_path: Path) -> IngestionRequest:
-    source = tmp_path / "source.bag"
-    source.write_bytes(b"fixture")
-    return IngestionRequest(
-        source_type="ros1_bag",
-        source_path=source,
-        sequence_name="corridor",
-        workspace_root=tmp_path,
-        topics={"rgb": "/camera", "lidar": "/points"},
-        required_topics=frozenset({"rgb", "lidar"}),
-        reference_modality="image",
-        tolerance_nanoseconds=50_000_000,
-    )
-
-
-def test_request_validation_and_effective_config_are_deterministic(tmp_path: Path) -> None:
-    request = _request(tmp_path)
-
-    assert validate_ingestion_request(request) == ()
-    assert request.effective_config()["required_topics"] == ["lidar", "rgb"]
+def test_required_topics_are_only_parsed_as_form_input() -> None:
     assert parse_required_topics(" rgb, lidar, rgb ") == frozenset({"rgb", "lidar"})
 
 
-def test_validation_rejects_missing_required_mapping(tmp_path: Path) -> None:
-    request = _request(tmp_path)
-    request = IngestionRequest(
-        source_type=request.source_type,
-        source_path=request.source_path,
-        sequence_name=request.sequence_name,
-        workspace_root=request.workspace_root,
-        topics={"rgb": "/camera"},
-        required_topics=frozenset({"rgb", "lidar"}),
-    )
-
-    problems = validate_ingestion_request(request)
-
-    assert "required topic 'lidar' has no mapping" in problems
-
-
 def test_unavailable_runner_never_falls_back_to_tui_engine(tmp_path: Path) -> None:
-    runner = UnavailableIngestionRunner()
-    request = _request(tmp_path)
+    runner = UnavailableIngestionRunner("core runner missing")
 
     assert runner.availability().available is False
-    assert runner.preflight(request).ok is False
-    result = runner.run(request, emit=lambda event: None, cancel_event=Event())
-    assert result.status == "unsupported"
+    assert runner.discover(tmp_path, profile="canonical/1").backends == ()
+    with pytest.raises(RuntimeError, match="core runner missing"):
+        runner.prepare({}, workspace_root=tmp_path, profile="canonical/1")
 
 
 def test_fake_runner_honors_preexisting_cancellation(tmp_path: Path) -> None:
     runner = FakeIngestionRunner(result=IngestionResult(status="completed"))
-    cancel = Event()
-    cancel.set()
+    prepared = runner.prepare({}, workspace_root=tmp_path, profile="canonical/1")
+    runner.cancel(prepared)
 
-    result = runner.run(_request(tmp_path), emit=lambda event: None, cancel_event=cancel)
+    result = runner.run(prepared, emit=lambda event: None)
 
     assert result.status == "cancelled"
+
+
+def test_unexpected_service_exception_is_not_a_domain_result() -> None:
+    class BrokenService:
+        def run(self, request: object, **kwargs: object) -> None:
+            del request, kwargs
+            raise RuntimeError("programming bug")
+
+    prepared = PreparedIngestion(
+        request=object(),
+        config=object(),
+        runtime=SimpleNamespace(ingestion=lambda config: BrokenService()),
+        cancellation=object(),
+    )
+
+    with pytest.raises(RuntimeError, match="programming bug"):
+        LocalIngestionRunner().run(prepared, emit=lambda event: None)

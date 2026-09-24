@@ -10,8 +10,12 @@ from textual.binding import BindingType
 from textual.widgets import Footer, Header
 
 from contextmap_tui.client import ContextMapClient
-from contextmap_tui.ingestion import IngestionRunner, UnavailableIngestionRunner
-from contextmap_tui.integration import LocalContextMapClient, LocalRuntimeGateway
+from contextmap_tui.ingestion import IngestionRunner
+from contextmap_tui.integration import (
+    LocalContextMapClient,
+    LocalIngestionRunner,
+    LocalRuntimeGateway,
+)
 from contextmap_tui.runtime import RuntimeGateway
 from contextmap_tui.screens import HomeScreen
 
@@ -37,10 +41,12 @@ class ContextMapTuiApp(App[None]):
     ) -> None:
         """Create the app with injectable presentation/execution boundaries."""
         super().__init__()
-        self.client = client or LocalContextMapClient()
-        self.ingestion_runner = ingestion_runner or UnavailableIngestionRunner()
-        self.runtime_gateway = runtime_gateway or LocalRuntimeGateway()
         self.workspace_root = workspace_root or (Path.cwd() / "workspace")
+        self.client = client or LocalContextMapClient()
+        self.ingestion_runner = ingestion_runner or LocalIngestionRunner()
+        self.runtime_gateway = runtime_gateway or LocalRuntimeGateway(
+            workspace_root=self.workspace_root
+        )
 
     def compose(self) -> ComposeResult:
         """Compose persistent chrome; screens own page content."""

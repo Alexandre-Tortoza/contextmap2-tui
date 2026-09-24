@@ -48,7 +48,7 @@ class ArtifactScreen(Screen[None]):
                 f"{self._artifact.sequence_name} / {self._artifact.artifact_id}",
                 id="artifact-title",
             )
-            yield Static("", id="artifact-overview")
+            yield Static("", markup=False, id="artifact-overview")
             yield Static("Observations", classes="section-title")
             with Horizontal():
                 yield Input(placeholder="text / id / topic", id="filter-text")
@@ -58,15 +58,15 @@ class ArtifactScreen(Screen[None]):
             with Horizontal():
                 yield Button("Previous", id="previous-page")
                 yield Button("Next", id="next-page")
-                yield Static("", id="page-status")
+                yield Static("", markup=False, id="page-status")
             yield DataTable(id="observation-table", cursor_type="row")
             yield Static("Select an observation to inspect provenance.", id="observation-detail")
             yield Static("Provenance", classes="section-title")
-            yield Static("", id="provenance-view")
+            yield Static("", markup=False, id="provenance-view")
             yield Static("Calibration", classes="section-title")
-            yield Static("", id="calibration-view")
+            yield Static("", markup=False, id="calibration-view")
             yield Static("Diagnostics (debug evidence)", classes="section-title")
-            yield Static("", id="diagnostics-view")
+            yield Static("", markup=False, id="diagnostics-view")
 
     def on_mount(self) -> None:
         """Initialize the observation table and load the persisted artifact."""
