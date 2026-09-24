@@ -39,7 +39,7 @@ class WorkspaceScreen(Screen[None]):
             with Horizontal():
                 yield Input(value=str(self._workspace_root), id="workspace-path")
                 yield Button("Refresh", id="refresh-workspace", variant="primary")
-            yield Static("", id="workspace-status")
+            yield Static("", markup=False, id="workspace-status")
             yield DataTable(id="artifact-table", cursor_type="row")
 
     def on_mount(self) -> None:

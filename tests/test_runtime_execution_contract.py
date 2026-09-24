@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -293,3 +294,97 @@ def test_unreadable_run_record_stays_listed(tmp_path: Path) -> None:
     assert summary.error
     with pytest.raises(RuntimeOperationError):
         gateway.inspect_run(gateway.run_directory(summary) or "")
+
+
+def _catalog(path: Path, output: dict[str, Any]) -> Path:
+    entry = core.CatalogEntry(
+        ref=core.ArtifactRef.from_document(output), lineage=core.Lineage(), run_index=0
+    )
+    path.write_text(
+        json.dumps({"schema_version": "0.1.0", "entries": [entry.to_document()]}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_catalog_selection_execution_without_provided_artifacts(tmp_path: Path) -> None:
+    gateway, _ = _gateway(tmp_path / "ws", set())
+    first, _ = _run(gateway, _resolve(gateway))
+    ingestion = next(stage for stage in first.record.stages if stage.stage_id == "ingestion")
+    assert ingestion.output is not None
+    catalog = _catalog(tmp_path / "catalog.json", dict(ingestion.output))
+    overrides = (*OVERRIDES, 'inputs.selections.ingestion=["latest"]')
+
+    missing = gateway.resolve_pipeline(
+        profile="canonical/1",
+        overrides=overrides,
+        scope=RuntimeScope(targets=("state_estimation",)),
+    )
+    assert any(problem.path == "inputs.selections" for problem in missing.plan.problems)
+    assert not gateway.preflight(missing).ok
+
+    selected = gateway.resolve_pipeline(
+        profile="canonical/1",
+        overrides=overrides,
+        scope=RuntimeScope(targets=("state_estimation",), catalog=str(catalog)),
+    )
+    assert selected.plan.selections is not None
+    report = gateway.preflight(selected)
+    assert report.ok, report.problems
+    assert any("latest" in warning for warning in report.warnings)
+
+    result, _ = _run(gateway, selected)
+    assert result.status == "completed"
+    assert result.record.selections is not None
+    stage = next(s for s in result.record.stages if s.stage_id == "state_estimation")
+    assert stage.inputs == {"sequence": (ingestion.output["artifact_id"],)}
+
+
+def test_invalid_catalog_file_is_rejected(tmp_path: Path) -> None:
+    gateway, _ = _gateway(tmp_path, set())
+    (tmp_path / "bad.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeOperationError, match="schema_version"):
+        gateway.resolve_pipeline(
+            profile="canonical/1",
+            overrides=(*OVERRIDES, 'inputs.selections.ingestion=["latest"]'),
+            scope=RuntimeScope(targets=TARGETS, catalog=str(tmp_path / "bad.json")),
+        )
+
+
+def test_canonical_2_gaps_are_reported_not_substituted(tmp_path: Path) -> None:
+    gateway = LocalRuntimeGateway(
+        workspace_root=tmp_path,
+        runtime_options={"module_available": lambda _name: True, "environ": {}},
+    )
+    resolution = gateway.resolve_pipeline(
+        profile="canonical/2", overrides=('inputs.sequence="corridor"',)
+    )
+    report = gateway.preflight(resolution)
+
+    assert not report.ok
+    assert "ingestion" in report.missing_executors
+    assert set(report.missing_executors) <= set(report.stages)
+    result, events = _run(gateway, resolution)
+    assert result.status == "blocked"
+    assert [event.kind for event in events] == ["run_planned", "run_blocked"]
+    assert all(stage.outcome == "pending" for stage in result.record.stages)
+
+
+@pytest.mark.parametrize(
+    ("filename", "note"),
+    [("effective_config.json", "backends are unknown"), ("execution.json", "lineage is unknown")],
+)
+def test_unreadable_record_parts_become_runtime_notes(
+    tmp_path: Path, filename: str, note: str
+) -> None:
+    gateway, _ = _gateway(tmp_path, set())
+    result, _ = _run(gateway, _resolve(gateway))
+    (Path(result.record.directory) / filename).write_text("{not json", encoding="utf-8")
+
+    record = gateway.inspect_run(result.record.directory)
+
+    assert any(note in item for item in record.notes)
+    if filename == "effective_config.json":
+        assert record.backends is None
+    else:
+        assert record.selections is None and record.resume is None

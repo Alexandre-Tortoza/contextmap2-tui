@@ -1,7 +1,7 @@
 from pathlib import Path
 from threading import Event
 
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, RichLog
 
 from contextmap_tui.app import ContextMapTuiApp
 from contextmap_tui.client import FakeContextMapClient
@@ -182,3 +182,41 @@ async def test_failed_artifact_reopen_keeps_navigation_disabled(tmp_path: Path) 
 
         assert "could not be reopened" in str(app.screen.query_one("#ingestion-result").render())
         assert app.screen.query_one("#open-result", Button).disabled
+
+
+async def test_event_burst_is_logged_in_order_and_ui_stays_responsive(tmp_path: Path) -> None:
+    source = tmp_path / "source.bag"
+    source.write_bytes(b"fixture")
+    events = tuple(
+        IngestionEvent(
+            kind="ingestion.progress",
+            sequence=index,
+            time="2026-09-23T00:00:00Z",
+            stage_id="ingestion",
+            data={"observations": index, "note": "[not markup]"},
+        )
+        for index in range(1, 501)
+    )
+    runner = FakeIngestionRunner(result=IngestionResult(status="failed"), events=events)
+    app = ContextMapTuiApp(
+        client=FakeContextMapClient(), ingestion_runner=runner, workspace_root=tmp_path
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await _fill_minimal_form(app, source)
+        screen = app.screen
+        assert isinstance(screen, IngestionScreen)
+        screen._run_pressed()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        log = screen.query_one("#execution-log", RichLog)
+        text = "".join(line.text for line in log.lines)
+        positions = [text.index(f'"sequence": {n},') for n in (1, 250, 500)]
+        assert positions == sorted(positions)
+        assert text.count('"kind": "ingestion.progress"') == 500
+        assert text.count("[not markup]") == 500
+        assert "Status: failed" in str(screen.query_one("#execution-status").render())
+        assert runner.run_calls == 1

@@ -58,7 +58,7 @@ class IngestionScreen(Screen[None]):
         """Compose controls from public runtime choices and core request fields."""
         with VerticalScroll(id="ingestion-content"):
             yield Static("Ingestion Console", id="ingestion-title")
-            yield Static("", id="runner-availability")
+            yield Static("", markup=False, id="runner-availability")
             yield Select(
                 ((name, name) for name in self._discovery.profiles),
                 value=self._profile if self._profile else Select.NULL,
@@ -70,7 +70,7 @@ class IngestionScreen(Screen[None]):
                 prompt="Source adapter",
                 id="source-backend",
             )
-            yield Static("", id="source-options")
+            yield Static("", markup=False, id="source-options")
             yield Input(placeholder="source path", id="source-path")
             yield Input(placeholder="sequence name", id="sequence-name")
             yield Input(value=str(self._workspace_root), id="output-workspace")
@@ -110,16 +110,16 @@ class IngestionScreen(Screen[None]):
                 "CalibrationSet but exposes no general file decoder.",
                 id="calibration-status",
             )
-            yield Static("", id="effective-config")
-            yield Static("", id="preflight-result")
+            yield Static("", markup=False, id="effective-config")
+            yield Static("", markup=False, id="preflight-result")
             with Horizontal():
                 yield Button("Preflight", id="preflight", variant="primary")
                 yield Button("Run Ingestion", id="run-ingestion", variant="success")
                 yield Button("Cancel", id="cancel-ingestion", variant="warning")
             yield ProgressBar(total=100, show_eta=False, id="ingestion-progress")
-            yield Static("", id="execution-status")
+            yield Static("", markup=False, id="execution-status")
             yield RichLog(id="execution-log", wrap=True, markup=False)
-            yield Static("", id="ingestion-result")
+            yield Static("", markup=False, id="ingestion-result")
             yield Button("Open Artifact", id="open-result", disabled=True)
 
     def on_mount(self) -> None:
