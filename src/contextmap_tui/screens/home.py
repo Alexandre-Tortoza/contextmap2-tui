@@ -14,6 +14,7 @@ from contextmap_tui.ingestion import IngestionRunner
 from contextmap_tui.runtime import RuntimeGateway
 from contextmap_tui.screens.ingestion import IngestionScreen
 from contextmap_tui.screens.pipeline import PipelineScreen
+from contextmap_tui.screens.runs import RunsScreen
 from contextmap_tui.screens.workspace import WorkspaceScreen
 
 
@@ -24,6 +25,7 @@ class HomeScreen(Screen[None]):
         ("e", "explore", "Explore"),
         ("o", "operate", "Ingestion"),
         ("p", "pipeline", "Pipeline"),
+        ("r", "runs", "Runs"),
     ]
 
     def __init__(
@@ -53,7 +55,9 @@ class HomeScreen(Screen[None]):
                 "Ingestion [o]\n"
                 "  Source configuration, preflight and execution\n\n"
                 "Pipeline [p]\n"
-                "  Runtime capabilities, topology, preflight, execution and lineage",
+                "  Runtime capabilities, resolved plan, edits, preflight and execution\n\n"
+                "Runs [r]\n"
+                "  Persisted run lifecycle, stage outcomes and recorded lineage",
                 id="home-actions",
             )
             yield Static(
@@ -78,3 +82,7 @@ class HomeScreen(Screen[None]):
     def action_pipeline(self) -> None:
         """Open the runtime pipeline console."""
         self.app.push_screen(PipelineScreen(self._runtime_gateway))
+
+    def action_runs(self) -> None:
+        """Open the persisted-run inspector."""
+        self.app.push_screen(RunsScreen(self._runtime_gateway))

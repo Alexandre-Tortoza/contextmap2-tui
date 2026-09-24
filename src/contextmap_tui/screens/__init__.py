@@ -4,6 +4,7 @@ from contextmap_tui.screens.artifact import ArtifactScreen
 from contextmap_tui.screens.home import HomeScreen
 from contextmap_tui.screens.ingestion import IngestionScreen
 from contextmap_tui.screens.pipeline import PipelineScreen
+from contextmap_tui.screens.runs import RunsScreen
 from contextmap_tui.screens.workspace import WorkspaceScreen
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "HomeScreen",
     "IngestionScreen",
     "PipelineScreen",
+    "RunsScreen",
     "WorkspaceScreen",
 ]
