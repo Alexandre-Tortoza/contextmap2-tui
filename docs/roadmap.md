@@ -1,38 +1,46 @@
 # Roadmap
 
-A implementação está organizada em quatro milestones sequenciais.
+Baseline do core: `contextmap2/dev`. As APIs públicas de runtime e Ingestion já existem; a TUI se adapta a elas.
 
-## 1. Foundation & UI Architecture
+## Perfis do runtime
 
-Branch: `milestone/foundation`
+`canonical/1` e `canonical/2` são topologias versionadas distintas, descobertas por `Runtime.status().profiles`. `canonical/2` estende `canonical/1` sem redefini-lo:
 
-Objetivo: estabelecer packaging, CI, shell Textual, navegação, gateway `ContextMapClient` e infraestrutura de testes determinísticos.
+| Perfil | Etapas |
+|---|---|
+| `canonical/1` | `ingestion`, `visual_perception`, `state_estimation`, `geometric_mapping`, `sensor_association`, `point_representation` (opcional, desligada por padrão), `semantic_fusion` |
+| `canonical/2` | tudo de `canonical/1` + `semantic_mapping`, `entity_resolution`, `spatial_relations` |
 
-Saída esperada: aplicação instalável e navegável, ainda sem duplicar comportamento do core.
+A TUI lê essa topologia de `Runtime.resolve_plan`; ela nunca constrói nem religa o DAG.
 
-## 2. Artifact Explorer
+## Lacunas honestas reportadas pelo core
 
-Branch: `milestone/artifact-explorer`
+Estas lacunas pertencem ao core e aparecem na TUI exatamente como o runtime as reporta (`missing_executors`, problemas de preflight, runs `blocked`), sem executor substituto:
 
-Objetivo: permitir explorar sequences/artifacts, manifest, observações, provenance, calibração, synchronization, diagnostics e integridade por meio dos readers públicos do ContextMap2.
+- `ingestion` não tem executor composto automaticamente: precisa de um `IngestionStageExecutor` injetado, ou o artifact publicado pela Ingestion Console entra como `provided`/`selections`;
+- `visual_perception` só é composto com os quatro componentes selecionados e disponíveis, e backends de modelo precisam de `providers`;
+- `point_representation` ainda não tem executor;
+- `semantic_fusion` só tem executor para `baseline-evidence-accumulation-v1`;
+- `semantic_mapping` não tem executor: seu artifact precisa ser fornecido;
+- reuso e resume exigem um `verifier`, que só o dono dos executores pode fornecer (`LocalRuntimeGateway(runtime_options=...)`).
 
-Saída esperada: inspeção textual completa de um `SequenceArtifact` sem reabrir o bag original.
+`ContextMapArtifact` existe e é legível/validável por `contextmap.artifact`, mas a montagem do ContextMap ainda **não** é uma etapa do runtime.
 
-## 3. Ingestion Console
+## Milestones
 
-Branch: `milestone/ingestion-console`
+### Concluídas
 
-Objetivo: configurar fonte, topics, clocks, calibration e synchronization; executar Ingestion de forma não bloqueante; abrir o artifact persistido resultante.
+1. **Foundation & UI Architecture** — packaging, CI, shell Textual, navegação e testes determinísticos.
+2. **Artifact Explorer** — inspeção textual de `SequenceArtifact` pelos readers públicos.
+3. **Ingestion Console** — request público `IngestionRequest`, preflight e execução via `IngestionService`, cancelamento cooperativo e reabertura do artifact publicado ([#12](https://github.com/Alexandre-Tortoza/contextmap2-tui/issues/12), [#24](https://github.com/Alexandre-Tortoza/contextmap2-tui/issues/24)).
+4. **Pipeline Console** — discovery por perfil ([#15](https://github.com/Alexandre-Tortoza/contextmap2-tui/issues/15)), editor guiado por `ResolvedPipelinePlan.editable` ([#16](https://github.com/Alexandre-Tortoza/contextmap2-tui/issues/16)), preflight/execução/reuso/resume/cancelamento ([#17](https://github.com/Alexandre-Tortoza/contextmap2-tui/issues/17)) e inspeção de runs persistidos ([#18](https://github.com/Alexandre-Tortoza/contextmap2-tui/issues/18)).
 
-Dependência: o core precisa expor uma API operacional estável para compor/executar Ingestion. A TUI não implementa um runner científico alternativo.
+Branch de integração atual: `milestone/public-core-integration`.
 
-## 4. Pipeline Console
+### Próximas
 
-Branch: `milestone/pipeline-console`
-
-Objetivo: descobrir capabilities instaladas, editar apenas a configuração suportada pelo runtime, executar preflight/stages/pipeline e inspecionar runs/lineage.
-
-Dependência: contratos públicos de `contextmap.runtime` para discovery, `PipelineConfig`, preflight e execução.
+5. **Stage artifact browser** ([#25](https://github.com/Alexandre-Tortoza/contextmap2-tui/issues/25)) — abrir qualquer saída registrada em um run pelo contract público (`ArtifactRef.contract`), com tela explícita para contracts desconhecidos. Depende dos readers públicos de cada capability.
+6. **ContextMap spatial-memory explorer** ([#26](https://github.com/Alexandre-Tortoza/contextmap2-tui/issues/26)) — explorer somente leitura de `ContextMapArtifact` via `ContextMapArtifactReader` e `validate_context_map_artifact`, preservando hipóteses, incerteza e proveniência. Geração/montagem fica fora de escopo até o core expô-la.
 
 ## Regra de promoção
 
@@ -40,11 +48,6 @@ Cada milestone é implementada na sua branch e só chega em `main` por Pull Requ
 
 ```mermaid
 flowchart LR
-    M1[Foundation] --> P1[PR -> main]
-    P1 --> M2[Artifact Explorer]
-    M2 --> P2[PR -> main]
-    P2 --> M3[Ingestion Console]
-    M3 --> P3[PR -> main]
-    P3 --> M4[Pipeline Console]
-    M4 --> P4[PR -> main]
+    F[Foundation] --> AE[Artifact Explorer] --> IC[Ingestion Console] --> PC[Pipeline Console]
+    PC --> SA[Stage artifact browser #25] --> CM[ContextMap explorer #26]
 ```

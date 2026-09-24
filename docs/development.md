@@ -9,6 +9,7 @@ milestone/foundation
 milestone/artifact-explorer
 milestone/ingestion-console
 milestone/pipeline-console
+milestone/public-core-integration
 ```
 
 Branches pequenas por issue são opcionais. Quando existirem, são integradas na branch da milestone, nunca diretamente em `main`.

@@ -8,7 +8,7 @@
 flowchart TD
     USER[Usuário] --> TUI[Textual screens/widgets]
     TUI --> APP[Application actions]
-    APP --> GW[ContextMapClient]
+    APP --> GW[Gateways: ContextMapClient / IngestionRunner / RuntimeGateway]
     GW --> API[contextmap2 public API]
     API --> ART[Artifact readers/writers]
     API --> RT[Runtime services]
@@ -18,11 +18,24 @@ flowchart TD
 
 A TUI pode depender da API pública do `contextmap2`. O core nunca depende deste repositório.
 
-## Boundary do gateway
+## Boundaries
 
-Uma camada pequena, conceitualmente `ContextMapClient`, isola screens/widgets dos detalhes da API do core. A UI consome view models ou valores Python simples. Testes podem substituir esse boundary por um fake determinístico sem ROS, modelos, bags ou workspace real.
+Somente `contextmap_tui/integration` importa `contextmap` (verificado por `tests/architecture/test_boundaries.py`), e apenas pelas raízes públicas (`contextmap.runtime`, `contextmap.ingestion`, `contextmap.artifact`). Screens dependem de protocolos:
 
-O gateway não é service locator e não reproduz comportamento científico.
+| Protocolo (`contextmap_tui`) | Adapter de produção | API pública |
+|---|---|---|
+| `client.ContextMapClient` | `LocalContextMapClient` | readers de `SequenceArtifact` |
+| `ingestion.IngestionRunner` | `LocalIngestionRunner` | `Runtime.ingestion` / `IngestionService` |
+| `runtime.RuntimeGateway` | `LocalRuntimeGateway` | `contextmap.runtime.Runtime` |
+
+O `RuntimeGateway` transporta os valores públicos do core de forma opaca (`EffectiveConfig`, `ResolvedPipelinePlan`, `RuntimePreflightReport`, `RuntimeExecutionResult`, `RuntimeRunSummary`, `RuntimeRunRecord`, `ExecutionEvent`). A UI só lê seus atributos para renderizar; não existe schema paralelo de pipeline ou de run.
+
+- Edições usam exclusivamente `RuntimeEdit.path` e a gramática de override `path=<json>`; após cada edição, configuração e plano são resolvidos de novo.
+- Escopo (`targets`, `provided`, `catalog`), reuso (`Runtime.reuse_policy`) e resume são repassados ao runtime, que decide.
+- `executors`, `providers` e `verifier` são argumentos públicos de `Runtime(...)` fornecidos por quem os possui (`LocalRuntimeGateway(runtime_options=...)`); a TUI nunca os constrói.
+- Campos ausentes em um registro persistido aparecem como "unknown (not recorded)" junto das `notes` do runtime, nunca reconstruídos.
+
+Testes de UI usam fakes determinísticos com o formato dos valores públicos (`tests/runtime_values.py`); testes de contrato rodam contra o core real quando instalado.
 
 ## Comportamentos proibidos
 
