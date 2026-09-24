@@ -1,4 +1,4 @@
-"""Presentation boundary for the future ContextMap2 global runtime."""
+"""Presentation boundary for the public ContextMap2 runtime."""
 
 from __future__ import annotations
 
@@ -18,7 +18,30 @@ class RuntimeAvailability:
 
     available: bool
     detail: str
-    api_version: str | None = None
+    contextmap_version: str | None = None
+    schemas: Mapping[str, str] = field(default_factory=dict)
+    profiles: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class BackendCapability:
+    """One backend reported by a public RuntimeComponent."""
+
+    backend_id: str
+    available: bool
+    reasons: tuple[str, ...] = ()
+    requires: tuple[str, ...] = ()
+    secrets: tuple[str, ...] = ()
+    install_hint: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentCapability:
+    """One runtime variation point, preserving optional backend=None."""
+
+    component_id: str
+    optional: bool
+    backends: tuple[BackendCapability, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +54,10 @@ class StageCapability:
     optional: bool
     backend_options: tuple[str, ...] = ()
     detail: str = ""
+    capability: str = ""
+    implemented: bool = True
+    default_enabled: bool = True
+    components: tuple[ComponentCapability, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +133,7 @@ class RuntimeGateway(Protocol):
         """Report installed runtime compatibility."""
         ...
 
-    def capabilities(self) -> tuple[StageCapability, ...]:
+    def capabilities(self, *, profile: str | None = None) -> tuple[StageCapability, ...]:
         """Return runtime-discovered stage/backend capabilities."""
         ...
 
@@ -157,8 +184,9 @@ class UnavailableRuntimeGateway:
     def _raise(self) -> Never:
         raise RuntimeOperationError(self.reason)
 
-    def capabilities(self) -> tuple[StageCapability, ...]:
+    def capabilities(self, *, profile: str | None = None) -> tuple[StageCapability, ...]:
         """Reject capability discovery while the runtime is unavailable."""
+        del profile
         self._raise()
 
     def pipeline_config(self) -> PipelineConfigView:
@@ -214,11 +242,13 @@ class FakeRuntimeGateway:
         return RuntimeAvailability(
             available=True,
             detail="deterministic fake runtime",
-            api_version="fake",
+            contextmap_version="fake",
+            profiles=("canonical/1",),
         )
 
-    def capabilities(self) -> tuple[StageCapability, ...]:
+    def capabilities(self, *, profile: str | None = None) -> tuple[StageCapability, ...]:
         """Return configured fake stage capabilities."""
+        del profile
         return self.stage_capabilities
 
     def pipeline_config(self) -> PipelineConfigView:

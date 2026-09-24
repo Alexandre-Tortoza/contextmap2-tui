@@ -10,7 +10,7 @@ from textual.app import ComposeResult
 from textual.binding import BindingType
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Input, ProgressBar, RichLog, Static
+from textual.widgets import Button, DataTable, Input, ProgressBar, RichLog, Select, Static
 
 from contextmap_tui.runtime import (
     PipelineConfigView,
@@ -19,6 +19,7 @@ from contextmap_tui.runtime import (
     RuntimeEvent,
     RuntimeGateway,
     RuntimeOperationError,
+    StageCapability,
 )
 
 
@@ -33,6 +34,8 @@ class PipelineScreen(Screen[None]):
         self._runtime = runtime
         self._config: PipelineConfigView | None = None
         self._capability_ids: list[str] = []
+        self._capabilities: tuple[StageCapability, ...] = ()
+        self._profile = ""
         self._cancel_event = Event()
         self._runs: tuple[RunRecord, ...] = ()
 
@@ -41,8 +44,10 @@ class PipelineScreen(Screen[None]):
         with VerticalScroll(id="pipeline-content"):
             yield Static("Pipeline Console", id="pipeline-title")
             yield Static("", id="runtime-availability")
+            yield Select((), prompt="Runtime profile", id="runtime-profile")
             yield Static("Capabilities", classes="section-title")
             yield DataTable(id="capability-table", cursor_type="row")
+            yield Static("", id="capability-detail")
             yield Static("Effective pipeline", classes="section-title")
             yield DataTable(id="pipeline-table", cursor_type="row")
             with Horizontal():
@@ -65,7 +70,7 @@ class PipelineScreen(Screen[None]):
     def on_mount(self) -> None:
         """Configure data tables and discover the runtime contract."""
         capabilities = self.query_one("#capability-table", DataTable)
-        capabilities.add_columns("Stage", "Available", "Optional", "Backends", "Detail")
+        capabilities.add_columns("Stage", "Implemented", "Optional", "Default", "Components")
         pipeline = self.query_one("#pipeline-table", DataTable)
         pipeline.add_columns("Stage", "Enabled", "Backend", "Inputs")
         runs = self.query_one("#run-table", DataTable)
@@ -79,33 +84,83 @@ class PipelineScreen(Screen[None]):
     def _load_runtime(self) -> None:
         availability = self._runtime.availability()
         state = "available" if availability.available else "unavailable"
-        api = f" api={availability.api_version}" if availability.api_version else ""
+        version = (
+            f" version={availability.contextmap_version}" if availability.contextmap_version else ""
+        )
+        schemas = ", ".join(
+            f"{name}={value}" for name, value in sorted(availability.schemas.items())
+        )
         self.query_one("#runtime-availability", Static).update(
-            f"Runtime: {state}{api}\n{availability.detail}"
+            f"Runtime: {state}{version}\n{availability.detail}\n"
+            f"schemas: {schemas or 'unknown'}\n"
+            f"profiles: {', '.join(availability.profiles) or 'none'}"
         )
         if not availability.available:
             return
+        self._profile = availability.profiles[0] if availability.profiles else ""
+        selector = self.query_one("#runtime-profile", Select)
+        selector.set_options((profile, profile) for profile in availability.profiles)
+        if self._profile:
+            selector.value = self._profile
+        self._load_capabilities()
         try:
-            capabilities = self._runtime.capabilities()
             self._config = self._runtime.pipeline_config()
         except RuntimeOperationError as error:
             self.query_one("#pipeline-config-status", Static).update(str(error))
             return
 
+        self._render_config()
+        self._refresh_runs()
+
+    def _load_capabilities(self) -> None:
+        try:
+            self._capabilities = self._runtime.capabilities(profile=self._profile)
+        except RuntimeOperationError as error:
+            self.query_one("#capability-detail", Static).update(str(error))
+            return
         capability_table = self.query_one("#capability-table", DataTable)
         capability_table.clear()
         self._capability_ids = []
-        for item in capabilities:
+        details = []
+        for item in self._capabilities:
             self._capability_ids.append(item.stage_id)
             capability_table.add_row(
                 item.display_name,
-                "yes" if item.available else "no",
+                "yes" if item.implemented else "no",
                 "yes" if item.optional else "no",
-                ", ".join(item.backend_options) or "none",
-                item.detail,
+                "yes" if item.default_enabled else "no",
+                str(len(item.components)),
             )
-        self._render_config()
-        self._refresh_runs()
+            details.append(
+                f"{item.stage_id} ({item.capability or 'capability unknown'}): "
+                f"{'implemented' if item.implemented else 'not implemented'}; "
+                f"optional={item.optional}; default_enabled={item.default_enabled}"
+            )
+            if item.detail:
+                details.append(f"  reason: {item.detail}")
+            for component in item.components:
+                details.append(f"  {component.component_id}: optional={component.optional}")
+                for backend in component.backends:
+                    details.append(
+                        f"    {backend.backend_id}: "
+                        f"{'available' if backend.available else 'unavailable'}"
+                    )
+                    details.extend(f"      reason: {reason}" for reason in backend.reasons)
+                    if backend.requires:
+                        details.append("      modules: " + ", ".join(backend.requires))
+                    if backend.secrets:
+                        details.append("      secret names: " + ", ".join(backend.secrets))
+                    if backend.install_hint:
+                        details.append("      install: " + backend.install_hint)
+        self.query_one("#capability-detail", Static).update("\n".join(details))
+
+    @on(Select.Changed, "#runtime-profile")
+    def _profile_changed(self) -> None:
+        selected = self.query_one("#runtime-profile", Select).value
+        if not isinstance(selected, str) or selected == self._profile:
+            return
+        self._profile = selected
+        self._load_capabilities()
 
     def _render_config(self) -> None:
         table = self.query_one("#pipeline-table", DataTable)

@@ -41,10 +41,12 @@ class ContextMapTuiApp(App[None]):
     ) -> None:
         """Create the app with injectable presentation/execution boundaries."""
         super().__init__()
+        self.workspace_root = workspace_root or (Path.cwd() / "workspace")
         self.client = client or LocalContextMapClient()
         self.ingestion_runner = ingestion_runner or LocalIngestionRunner()
-        self.runtime_gateway = runtime_gateway or LocalRuntimeGateway()
-        self.workspace_root = workspace_root or (Path.cwd() / "workspace")
+        self.runtime_gateway = runtime_gateway or LocalRuntimeGateway(
+            workspace_root=self.workspace_root
+        )
 
     def compose(self) -> ComposeResult:
         """Compose persistent chrome; screens own page content."""
